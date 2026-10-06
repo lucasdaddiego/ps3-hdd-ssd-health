@@ -26,6 +26,16 @@ void trim_copy(char *dst, const char *src, int n)
     dst[z - a] = 0;
 }
 
+/* The report keeps the first two and the last two characters of the serial
+ * number: enough to tell two drives apart, not enough to identify one. */
+void serial_mask(const char *serial, char *out, int n)
+{
+    int len = strlen(serial), j = 0;
+    for (int i = 0; i < len && j < n - 1; i++)
+        out[j++] = (len > 6 && (i < 2 || i >= len - 2)) ? serial[i] : '*';
+    out[j] = 0;
+}
+
 static void ata_string(const uint8_t *b, int first, int nwords, int swapped, char *out)
 {
     char raw[64];

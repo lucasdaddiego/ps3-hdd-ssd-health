@@ -61,5 +61,6 @@ int smart_health(const smart_data *s, const selftest_log *log, char *why, int wh
 int sector_checksum(const uint8_t *buf);
 int model_match(const char *a, const char *b);
 void trim_copy(char *dst, const char *src, int n);
+void serial_mask(const char *serial, char *out, int n);
 
 #endif

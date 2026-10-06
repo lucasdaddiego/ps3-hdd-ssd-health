@@ -44,7 +44,17 @@ It is **not tested** on CFW (Evilnat, Rebug and others), on fat or slim models, 
 other firmware versions, or on original HDDs. On another setup, the drive command
 can be refused (the app then says "not supported") or it can freeze the console
 (see below). If you try it, please open an issue with your model, firmware, drive
-and the result.
+and the result, and it goes into this table.
+
+### Tested on
+
+| Model | Firmware | Drive | Version | Result | Source |
+|---|---|---|---|---|---|
+| Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 1.0.1 | IDENTIFY, SMART reads and the short self-test work | author |
+
+An issue report needs: the model line of the console, the firmware and HEN/CFW
+version, the drive (from the main screen or the report), the app version, and
+what happened (works, "not supported", or a freeze and at which step).
 
 ## Install
 
@@ -63,13 +73,19 @@ and the result.
    - UP/DOWN scroll, L1/R1 page.
    - CIRCLE reads the drive again.
    - TRIANGLE twice starts the short self-test (about 1–2 min). The line at the
-     bottom shows the progress, then the result.
-   - START or the PS button exits.
+     bottom shows the progress, then the result. The result comes from the new
+     entry in the drive's self-test log, not from a timer: a drive that accepts
+     the command but never runs the test shows "no progress" in yellow, not a pass.
+   - SQUARE twice clears the freeze journal (below). Any other button cancels the
+     first press.
+   - START, or Quit Game from the PS button menu, exits and closes the drive.
 
 Files on the console, in `/dev_hdd0/tmp/hdd_ssd_health/`:
-- `report-YYYYMMDD-HHMMSS.txt` — one report per read (UTC time).
+- `report-YYYYMMDD-HHMMSS.txt` — one report per read (UTC time). The serial
+  number is masked (`AB******78`).
 - `identify.bin`, `smart.bin`, `thresh.bin`, `selftest.bin`, `devinfo.bin` — the
-  raw sectors of the last read.
+  raw sectors of the last read. `identify.bin` holds the full serial number and
+  the WWN: do not attach it to a public issue.
 - `journal.txt` — the freeze journal (below).
 
 ## Safety
@@ -93,6 +109,11 @@ console freezes inside a call, the next start finds the call without a "done"
 line and never runs that call again. After a forced power-off, let the console
 check its file system at boot if it offers to, and never choose "Restore PS3
 System".
+
+The app reads only the last 32 KB of the journal, so a long session cannot hide
+the newest entry. To try a skipped call again (for example after a firmware
+change), press SQUARE twice on any screen: the journal is emptied, and the next
+start runs every call again.
 
 ## Health line
 

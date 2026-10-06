@@ -32,6 +32,7 @@ int drive_read_smart(drive_state *d, int full);
 int drive_start_short_selftest(drive_state *d);
 int drive_can_selftest(const drive_state *d);
 void drive_close(drive_state *d);
+void journal_clear(void);
 int report_write(const drive_state *d, char *path, int len);
 
 #endif

@@ -20,6 +20,7 @@
 #define BTN_RIGHT    0x2000
 #define BTN_UP       0x1000
 #define BTN_START    0x0800
+#define BTN_SQUARE   0x0080
 #define BTN_CROSS    0x0040
 #define BTN_CIRCLE   0x0020
 #define BTN_TRIANGLE 0x0010
@@ -37,6 +38,14 @@
 
 static drive_state D;
 static char report_path[128];
+static volatile int quit;               /* set by the system: Quit Game from the PS button menu */
+
+static void sys_callback(u64 status, u64 param, void *usrdata)
+{
+    (void)param;
+    (void)usrdata;
+    if (status == SYSUTIL_EXIT_GAME) quit = 1;
+}
 
 /* ---- font and frame ------------------------------------------------------- */
 
@@ -125,7 +134,7 @@ static u32 attr_color(const smart_attr *a)
     return WHITE;
 }
 
-static void draw_probe_screen(void)
+static void draw_probe_screen(const char *st_msg, u32 st_color)
 {
     float y = 70;
     text(30, y, 16, D.info_rc ? YELLOW : WHITE, "609 device info  rc 0x%08x  %llu sectors", (unsigned)D.info_rc,
@@ -144,6 +153,8 @@ static void draw_probe_screen(void)
     else
         text(30, y, 18, YELLOW, "This console refuses ATA commands through syscall 616: not supported.");
     text(30, y + 26, 16, GREY, "The report in " APP_DIR " has the details.");
+    if (st_msg) text(30, 430, 16, st_color, "%s", st_msg);
+    text(30, 455, 14, GREY, "SQUARE twice clear the freeze journal   START exit");
 }
 
 static void draw_main(int scroll, int confirm, int running, const char *st_msg, u32 st_color)
@@ -205,21 +216,36 @@ static void draw_main(int scroll, int confirm, int running, const char *st_msg, 
     else
         text(30, y, 16, GREY, D.have_stlog ? "Self-test log: empty" : "Self-test log: not readable (rc 0x%08x)",
              (unsigned)D.stlog_rc);
-    text(30, 455, 14, GREY, "UP/DOWN scroll   CIRCLE re-read   %sSTART exit",
-         drive_can_selftest(&D) ? "TRIANGLE short self-test   " : "");
+    text(30, 455, 14, GREY, "UP/DOWN scroll   CIRCLE re-read   %sSQUARE twice clear journal   START exit",
+         drive_can_selftest(&D) ? "TRIANGLE self-test   " : "");
 }
 
 static void close_drive(void) { drive_close(&D); }
 
+/* SQUARE twice clears the freeze journal. Returns 1 when the second press
+ * cleared it; *confirm holds the state between frames. */
+static int clear_gesture(int *confirm)
+{
+    if (pressed & BTN_SQUARE) {
+        if (!*confirm) { *confirm = 1; return 0; }
+        *confirm = 0;
+        journal_clear();
+        return 1;
+    }
+    if (pressed) *confirm = 0;          /* any other button cancels */
+    return 0;
+}
+
 /* Before the drive is touched: the file self-test, and CROSS to go on. */
 static int start_screen(void)
 {
-    int mk, op, wr;
+    int mk, op, wr, confirm = 0, cleared = 0;
     int fs_ok = fs_selftest(&mk, &op, &wr) == 0;
     while (1) {
         read_pad();
-        if (pressed & BTN_START) return 0;
+        if (quit || (pressed & BTN_START)) return 0;
         if ((pressed & BTN_CROSS) && fs_ok) return 1;
+        if (fs_ok && clear_gesture(&confirm)) cleared = 1;
         begin_frame();
         title();
         text(30, 70, 18, GREEN, "Graphics ok.");
@@ -233,27 +259,48 @@ static int start_screen(void)
             text(30, 150, 18, RED, "The app cannot write " APP_DIR ".");
             text(30, 176, 16, GREY, "Without its journal it does not touch the drive.");
         }
-        text(30, 455, 14, GREY, "%sSTART exit", fs_ok ? "CROSS read the drive   " : "");
+        if (confirm) text(30, 430, 16, YELLOW, "Press SQUARE again to clear the freeze journal. The next read runs every step.");
+        else if (cleared) text(30, 430, 16, GREEN, "Freeze journal cleared: every drive step runs again.");
+        text(30, 455, 14, GREY, "%sSTART exit", fs_ok ? "CROSS read the drive   SQUARE twice clear journal   " : "");
         tiny3d_Flip();
     }
+}
+
+/* Every exit path: START, Quit Game from the PS button menu, and exit(). */
+static void leave(void)
+{
+    drive_close(&D);
+    ioPadEnd();
+    sysUtilUnregisterCallback(SYSUTIL_EVENT_SLOT0);
 }
 
 int main(void)
 {
     ioPadInit(7);
+    sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0, sys_callback, NULL);
     init_graph();
     atexit(close_drive);
-    if (!start_screen()) { ioPadEnd(); return 0; }
+    if (!start_screen()) { leave(); return 0; }
     drive_probe(&D, progress);
     report_write(&D, report_path, sizeof report_path);
 
-    int scroll = 0, confirm = 0, running = 0, seen_running = 0;
-    s64 next_poll = 0, started = 0;
+    int scroll = 0, confirm = 0, clear_confirm = 0, running = 0, seen_running = 0;
+    s64 next_poll = 0, started = 0, deadline = 0;
+    selftest_entry log_before;
+    int log_before_count = 0;
     char st_msg[128] = "";
     u32 st_color = WHITE;
+    memset(&log_before, 0, sizeof log_before);
     while (1) {
         read_pad();
-        if (pressed & BTN_START) break;
+        if (quit || (pressed & BTN_START)) break;
+        if (clear_gesture(&clear_confirm)) {
+            snprintf(st_msg, sizeof st_msg, "Freeze journal cleared. Start the app again to run the skipped steps.");
+            st_color = GREEN;
+        } else if (clear_confirm) {
+            snprintf(st_msg, sizeof st_msg, "Press SQUARE again to clear the freeze journal.");
+            st_color = YELLOW;
+        }
         int max_scroll = D.s.count > ROWS ? D.s.count - ROWS : 0;
         if (pressed & BTN_DOWN) scroll++;
         if (pressed & BTN_UP) scroll--;
@@ -273,43 +320,61 @@ int main(void)
             else {
                 confirm = 0;
                 progress("Starting the short self-test");
+                log_before_count = D.have_stlog ? D.log.count : 0;
+                if (log_before_count) log_before = D.log.e[0];
                 if (drive_start_short_selftest(&D) == 0) {
                     running = 1;
                     seen_running = 0;
                     started = sysGetSystemTime();
                     next_poll = started + 3000000;
+                    deadline = started + 60000000;
                 } else {
                     snprintf(st_msg, sizeof st_msg, "Self-test start refused: rc 0x%08x", (unsigned)D.selftest_rc);
                     st_color = RED;
                 }
             }
         }
-        /* Poll SMART data every 5 s; byte 363 high nibble 0xF = still running. */
+        /* Poll SMART data every 5 s; byte 363 high nibble 0xF = still running.
+         * The result comes only from a new entry in the self-test log: a drive
+         * that accepts the command and never runs the test shows no green pass. */
         if (running && sysGetSystemTime() >= next_poll) {
-            next_poll = sysGetSystemTime() + 5000000;
+            s64 now = sysGetSystemTime();
+            next_poll = now + 5000000;
             if (drive_read_smart(&D, 0) != 0) {
                 running = 0;
                 snprintf(st_msg, sizeof st_msg, "SMART read failed during the self-test: rc 0x%08x", (unsigned)D.smart_rc);
                 st_color = RED;
             } else if ((D.s.selftest >> 4) == 0xF) {
                 seen_running = 1;
-            } else if (seen_running || sysGetSystemTime() - started > 15000000) {
-                running = 0;
+                deadline = now + 60000000;   /* the log entry may come a little after the status byte */
+            } else {
                 drive_read_smart(&D, 1);
-                report_write(&D, report_path, sizeof report_path);
-                snprintf(st_msg, sizeof st_msg, "Self-test finished: %s", selftest_status_text(D.s.selftest));
-                st_color = (D.s.selftest >> 4) == 0 ? GREEN : RED;
+                int logged = D.have_stlog && D.log.count &&
+                             (D.log.count != log_before_count || memcmp(&D.log.e[0], &log_before, sizeof log_before));
+                if (logged) {
+                    running = 0;
+                    report_write(&D, report_path, sizeof report_path);
+                    snprintf(st_msg, sizeof st_msg, "Self-test finished: %s (log entry at %u h)",
+                             selftest_status_text(D.log.e[0].status), D.log.e[0].hours);
+                    st_color = (D.log.e[0].status >> 4) == 0 ? GREEN : RED;
+                } else if (now > deadline) {
+                    running = 0;
+                    report_write(&D, report_path, sizeof report_path);
+                    snprintf(st_msg, sizeof st_msg, "Self-test: %s, and no new log entry (byte 363 = 0x%02x)",
+                             seen_running ? "the drive stopped reporting progress" : "the drive reported no progress",
+                             D.s.selftest);
+                    st_color = YELLOW;
+                }
             }
         }
 
         begin_frame();
         title();
         if (D.ata_ok && D.have_identify) draw_main(scroll, confirm, running, st_msg[0] ? st_msg : NULL, st_color);
-        else draw_probe_screen();
+        else draw_probe_screen(st_msg[0] ? st_msg : NULL, st_color);
         text(30, 478, 12, GREY, "Report: %s", report_path);
         tiny3d_Flip();
     }
-    drive_close(&D);
-    ioPadEnd();
+    leave();
     return 0;
 }

@@ -122,6 +122,15 @@ int main(void)
     smart_parse(data, th, &s);
     CHECK(smart_health(&s, &l, why, sizeof why) == HEALTH_WARN && strstr(why, "last self-test failed"));
 
+    char masked[21];
+    serial_mask("AB12345678", masked, sizeof masked);
+    CHECK(!strcmp(masked, "AB******78"));
+    serial_mask("S1234", masked, sizeof masked);          /* too short to keep any character */
+    CHECK(!strcmp(masked, "*****"));
+    serial_mask("", masked, sizeof masked);
+    CHECK(!strcmp(masked, ""));
+    serial_mask("WD-WCC4N1234567", masked, 8);           /* fits the buffer */
+    CHECK(strlen(masked) == 7);
     CHECK(smart_counter(10) && smart_counter(199) && !smart_counter(9));
     CHECK(!strcmp(smart_attr_name(193), "Load cycles"));
 

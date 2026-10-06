@@ -83,17 +83,31 @@ static void jappend(const char *fmt, const char *name, s32 rc, int ok)
     write_file(JOURNAL, line, strlen(line), 1);
 }
 
+/* Reads the tail of the journal (the last 32 KB), so a long session cannot
+ * push the newest "start"/"done" pair past the end of the buffer; the cut
+ * line at the head of the tail is dropped. */
 static void journal_load(void)
 {
     static char text[32768];
     s32 fd;
-    u64 n = 0;
+    u64 n = 0, size = 0, pos = 0;
+    char *first = text;
     jn = 0;
     if (sysLv2FsOpen(JOURNAL, SYS_O_RDONLY, &fd, 0, NULL, 0)) return;
+    if (sysLv2FsLSeek64(fd, 0, SEEK_END, &size) == 0 && size > sizeof text - 1) {
+        sysLv2FsLSeek64(fd, size - (sizeof text - 1), SEEK_SET, &pos);
+        first = NULL;                    /* the first line of the tail is cut */
+    } else {
+        sysLv2FsLSeek64(fd, 0, SEEK_SET, &pos);
+    }
     sysLv2FsRead(fd, text, sizeof text - 1, &n);
     sysLv2FsClose(fd);
     text[n] = 0;
-    for (char *line = strtok(text, "\n"); line; line = strtok(NULL, "\n")) {
+    if (!first) {
+        first = strchr(text, '\n');
+        first = first ? first + 1 : text + n;
+    }
+    for (char *line = strtok(first, "\n"); line; line = strtok(NULL, "\n")) {
         char verb[8], name[24];
         int ok = 0;
         if (sscanf(line, "%7s %23s", verb, name) != 2) continue;
@@ -109,7 +123,7 @@ static void journal_load(void)
             jst[i].state = J_FROZEN;
             jappend("froze %s\n", jst[i].name, 0, 0);
         }
-    if (n > sizeof text / 2) {       /* compact: one line per call, the frozen ones kept */
+    if (size > sizeof text / 2) {    /* compact: one line per call, the frozen ones kept */
         char line[64];
         text[0] = 0;
         for (int i = 0; i < jn; i++) {
@@ -119,6 +133,13 @@ static void journal_load(void)
         }
         write_file(JOURNAL, text, strlen(text), 0);
     }
+}
+
+/* The clear gesture: an empty journal, so the next start runs every call again. */
+void journal_clear(void)
+{
+    write_file(JOURNAL, "", 0, 0);
+    jn = 0;
 }
 
 static int jstart(const char *name)
@@ -321,7 +342,9 @@ int report_write(const drive_state *d, char *path, int len)
     out("616 IDENTIFY:    rc=0x%08x %s\n", (unsigned)d->identify_rc, d->identify_note);
     if (d->have_identify) {
         const ata_identity *i = &d->id;
-        out("\nmodel %s\nserial %s\nfirmware %s\n", i->model, i->serial, i->firmware);
+        char serial[sizeof i->serial];
+        serial_mask(i->serial, serial, sizeof serial);
+        out("\nmodel %s\nserial %s (masked; identify.bin has it in full)\nfirmware %s\n", i->model, serial, i->firmware);
         out("capacity %.1f GB (%llu sectors of %u bytes, LBA48 %s)\n",
             (double)i->sectors * i->logical_size / 1e9, (unsigned long long)i->sectors, i->logical_size, yesno(i->lba48));
         if (i->rotation == 1) out("type SSD\n");
