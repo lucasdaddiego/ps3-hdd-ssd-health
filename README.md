@@ -15,6 +15,25 @@ It shows:
 
 Each run saves a text report on the console.
 
+## Screenshots
+
+Photos of the TV on the test console. The drive serial number is hidden.
+
+<table>
+<tr>
+<td><img src="docs/xmb.jpg" alt="The app in the XMB Game column"><br>The XMB icon and background.</td>
+<td><img src="docs/start.jpg" alt="First screen"><br>First screen: the graphics and file test.</td>
+</tr>
+<tr>
+<td><img src="docs/main.jpg" alt="Main screen"><br>Main screen: drive, health line, attributes, last self-test.</td>
+<td><img src="docs/selftest-confirm.jpg" alt="Self-test confirmation"><br>TRIANGLE once: the app asks for a second press.</td>
+</tr>
+<tr>
+<td><img src="docs/selftest-running.jpg" alt="Self-test running"><br>The self-test runs. The line shows the progress.</td>
+<td><img src="docs/selftest-done.jpg" alt="Self-test finished"><br>The self-test finished. The table is at its end (28/28).</td>
+</tr>
+</table>
+
 ## Status and compatibility
 
 Version 1.0.1 works on one console: a PS3 Super Slim on **HFW 4.93 with PS3HEN
