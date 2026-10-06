@@ -1,0 +1,5 @@
+# --- regenerable build artifacts (rebuild with ./build.sh) ---
+build/
+*.elf
+*.self
+*.pkg
