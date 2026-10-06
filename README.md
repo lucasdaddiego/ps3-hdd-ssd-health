@@ -140,8 +140,13 @@ builds PSL1GHT `6e565a7` (2020-11-25, `ppu/` only), tiny3D and libfont3d into it
 `build.sh`:
 1. runs the decoder unit test (`test/test_smart.c`) on the Mac;
 2. runs `make pkg`;
-3. runs `verify_self.py`, which decrypts the signed EBOOT, compares every segment
-   with the ELF and recomputes each segment's HMAC-SHA1 and the ECDSA signature.
+3. runs `python3 -I verify_self.py`, which decrypts the signed EBOOT, compares
+   every segment with the ELF and recomputes each segment's HMAC-SHA1 and the
+   ECDSA signature. The Sony key material it needs is not in this repository:
+   the script reads it from `~/.local/share/ps3dev/keys.toml` (or `$PS3DEV_KEYS`),
+   seven hex strings named `KEYPAIR_E`, `ERK`, `RIV`, `SIG_R`, `SIG_N`, `SIG_K`,
+   `SIG_DA`, copied from PSL1GHT's `tools/geohot` (`keys.h`, `oddkeys.h`). See
+   [NOTICE](NOTICE), item 6.
 
 Toolchain findings that cost the most time:
 - **Apps built with PSL1GHT's 2021+ runtime do not start on HFW 4.93 + PS3HEN

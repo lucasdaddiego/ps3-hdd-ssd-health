@@ -3,3 +3,7 @@ build/
 *.elf
 *.self
 *.pkg
+__pycache__/
+
+# --- never tracked: Sony key material for verify_self.py lives in ~/.local/share/ps3dev/keys.toml ---
+keys.toml

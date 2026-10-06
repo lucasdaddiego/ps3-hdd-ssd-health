@@ -15,5 +15,5 @@ $t/test_smart
 rm -r $t
 rm -f hdd_ssd_health.pkg hdd_ssd_health.gnpdrm.pkg
 make pkg
-python3 verify_self.py build/pkg/USRDIR/EBOOT.BIN build/hdd_ssd_health.elf
+${PYTHON:-python3} -I verify_self.py build/pkg/USRDIR/EBOOT.BIN build/hdd_ssd_health.elf
 ls -la hdd_ssd_health.gnpdrm.pkg

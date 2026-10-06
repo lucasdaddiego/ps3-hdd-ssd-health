@@ -45,3 +45,11 @@ contains compiled code and data from the projects below.
    by art/make_art.py. Their text is rendered with the Inter font
    (https://github.com/rsms/inter, SIL Open Font License 1.1); the font file is
    not part of this repository or the pkg.
+
+6. verify_self.py recomputes what make_self_npdrm signs. The key material it
+   needs (the NPDRM metadata key blob, the metadata AES key and IV, and the
+   ECDSA r, n, k and private key) belongs to PSL1GHT's tools
+   (https://github.com/ps3dev/PSL1GHT, tools/geohot). It is not part of this
+   repository and is outside its MIT grant: the script reads it at run time
+   from ~/.local/share/ps3dev/keys.toml (or $PS3DEV_KEYS), which is never
+   committed.
