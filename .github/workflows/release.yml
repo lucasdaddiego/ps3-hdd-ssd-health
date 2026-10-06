@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pkg:
+    name: Build the pkg and attach it to a draft release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PS3DEV_KEYS_TOML: ${{ secrets.PS3DEV_KEYS_TOML }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/ps3dev-sdk
+
+      - name: Decoder test, then make pkg
+        run: |
+          cc -std=c99 -Wall -Wextra -Werror -o test_smart test/test_smart.c source/smart.c
+          ./test_smart
+          make pkg
+
+      - name: Verify the signed EBOOT against the ELF
+        if: env.PS3DEV_KEYS_TOML != ''
+        run: |
+          python3 -m venv venv
+          venv/bin/pip install -q pycryptodome
+          umask 077
+          printf '%s\n' "$PS3DEV_KEYS_TOML" > keys.toml
+          PS3DEV_KEYS=$PWD/keys.toml venv/bin/python3 -I verify_self.py build/pkg/USRDIR/EBOOT.BIN build/hdd_ssd_health.elf
+          rm -f keys.toml
+
+      - name: Name the pkg after the tag and write SHA256SUMS
+        run: |
+          cp hdd_ssd_health.gnpdrm.pkg "HDD-SSD-Health-$GITHUB_REF_NAME.pkg"
+          sha256sum "HDD-SSD-Health-$GITHUB_REF_NAME.pkg" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attach to the release (draft when the tag has none yet)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pkg="HDD-SSD-Health-$GITHUB_REF_NAME.pkg"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --clobber "$pkg" SHA256SUMS
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "HDD/SSD Health $GITHUB_REF_NAME" \
+              --notes "Built by the Release workflow from tag $GITHUB_REF_NAME. SHA-256 in SHA256SUMS. Edit these notes before you publish." \
+              "$pkg" SHA256SUMS
+          fi

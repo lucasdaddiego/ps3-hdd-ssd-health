@@ -199,6 +199,15 @@ Toolchain findings that cost the most time:
 - The macOS ARM64 `make_self` (CEX self) can crash with a bus error under make.
   The CEX self is not used, so the Makefile skips it.
 
+### CI and releases
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push: the host test of
+the decoder, a compile and `--help` smoke of the Python scripts, and a pkg build
+on Linux with the same `sdk_setup.sh` (the pkg is a workflow artifact). The
+signed EBOOT is verified in CI only when the repository secret `PS3DEV_KEYS_TOML`
+holds the key file. A `v*` tag (`.github/workflows/release.yml`) builds the pkg
+and attaches `HDD-SSD-Health-<tag>.pkg` and `SHA256SUMS` to a draft release.
+
 ## Credits
 
 - [PSL1GHT](https://github.com/ps3dev/PSL1GHT) and the

@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    name: Host test and script smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Decoder test (source/smart.c on the host)
+        run: |
+          cc -std=c99 -Wall -Wextra -Werror -o test_smart test/test_smart.c source/smart.c
+          ./test_smart
+
+      - name: Python scripts compile, verify_self.py --help
+        run: |
+          python3 -I -m py_compile verify_self.py art/make_art.py art/make_font.py
+          python3 -I verify_self.py --help > /dev/null
+          if PS3DEV_KEYS=/nonexistent python3 -I verify_self.py LICENSE 2> err.txt; then
+            echo "verify_self.py accepted a non-SELF without a key file"; exit 1
+          fi
+          grep -q 'key file /nonexistent not found' err.txt
+
+      - name: Shell syntax and sfo.xml
+        run: |
+          sudo apt-get install -y -qq zsh > /dev/null
+          zsh -n build.sh
+          zsh -n sdk_setup.sh
+          python3 -I - <<'PY'
+          import xml.etree.ElementTree as ET
+          v = {e.get('name'): e.text.strip() for e in ET.parse('sfo.xml').getroot()}
+          assert v['TITLE'] == 'HDD/SSD Health' and v['TITLE_ID'] == 'HDSH00001', v
+          PY
+
+  pkg:
+    name: PS3 pkg (Linux ps3dev bundle)
+    runs-on: ubuntu-latest
+    env:
+      # Optional: the key file for verify_self.py (see NOTICE item 6). Without
+      # it the pkg is built and uploaded, and only the signature check is skipped.
+      PS3DEV_KEYS_TOML: ${{ secrets.PS3DEV_KEYS_TOML }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/ps3dev-sdk
+
+      - name: make pkg
+        run: |
+          make pkg
+          ls -la hdd_ssd_health.gnpdrm.pkg build/pkg/USRDIR/EBOOT.BIN
+
+      - name: Verify the signed EBOOT against the ELF
+        if: env.PS3DEV_KEYS_TOML != ''
+        run: |
+          python3 -m venv venv
+          venv/bin/pip install -q pycryptodome
+          umask 077
+          printf '%s\n' "$PS3DEV_KEYS_TOML" > keys.toml
+          PS3DEV_KEYS=$PWD/keys.toml venv/bin/python3 -I verify_self.py build/pkg/USRDIR/EBOOT.BIN build/hdd_ssd_health.elf
+          rm -f keys.toml
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hdd_ssd_health.gnpdrm.pkg
+          path: hdd_ssd_health.gnpdrm.pkg
+          if-no-files-found: error

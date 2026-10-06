@@ -1,0 +1,31 @@
+name: ps3dev SDK
+description: >-
+  The ps3dev nightly-2026-07-26 Linux bundle with PSL1GHT's 2020 runtime and
+  tiny3D, built by sdk_setup.sh into ~/ps3dev (cached on the script's hash).
+runs:
+  using: composite
+  steps:
+    - name: zsh for the build scripts, libelf for sprxlinker
+      shell: bash
+      run: sudo apt-get install -y -qq zsh libelf1t64 > /dev/null   # sprxlinker links libelf
+
+    - name: Restore the SDK
+      id: sdk-cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/ps3dev
+        key: ps3dev-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('sdk_setup.sh') }}
+
+    - name: Build the SDK (bundle download, PSL1GHT 2020 runtime, tiny3D)
+      if: steps.sdk-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: ./sdk_setup.sh
+
+    - name: SDK environment
+      shell: bash
+      run: |
+        echo "PS3DEV=$HOME/ps3dev" >> "$GITHUB_ENV"
+        echo "PSL1GHT=$HOME/ps3dev" >> "$GITHUB_ENV"
+        echo "$HOME/ps3dev/bin" >> "$GITHUB_PATH"
+        echo "$HOME/ps3dev/ppu/bin" >> "$GITHUB_PATH"
+        cat "$HOME/ps3dev/.runtime-2020"
