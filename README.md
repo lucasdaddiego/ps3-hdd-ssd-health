@@ -146,7 +146,20 @@ sector_count, LBA_low, LBA_mid, LBA_high` (u16 each), `device, command` (u8),
 drive's 56-byte ATAPI block that webMAN, multiMAN and xai_plugin send: LV2 adds
 its own bounce buffer.
 
-## Build (macOS on Apple Silicon)
+## Build
+
+### Requirements
+
+- macOS on Apple Silicon or Intel, or Linux x86_64 (the ps3dev bundle exists for
+  these three). The scripts are zsh.
+- `curl`, `git`, `make`, `shasum` and a C compiler for the host test (`cc`).
+- Python 3.11 or newer. `verify_self.py` needs `pycryptodome`; `art/` needs
+  `Pillow`. `build.sh` runs the verifier as `python3 -I`, which ignores
+  `~/.local` packages, so install them into a venv and point `PYTHON` at it:
+  `python3 -m venv ~/.local/share/ps3dev/venv && ~/.local/share/ps3dev/venv/bin/pip install pycryptodome Pillow`,
+  then `PYTHON=~/.local/share/ps3dev/venv/bin/python3 ./build.sh`.
+- The key file for `verify_self.py` (step 3 below). Without it, `make pkg` still
+  builds the pkg, and only the check is missing.
 
 ```zsh
 ./sdk_setup.sh   # once: ~/ps3dev = ps3dev bundle + PSL1GHT 2020 runtime (about 20 s)
@@ -155,9 +168,10 @@ python3 art/make_art.py <Inter[opsz,wght].ttf>          # only to redraw ICON0/P
 python3 art/make_font.py <JetBrainsMono[wght].ttf>      # only to regenerate source/font.c
 ```
 
-`sdk_setup.sh` downloads the prebuilt ps3dev bundle `nightly-2026-07-26`
-(`ps3dev-macos-ARM64.tar.gz`, checksum checked) if `~/ps3dev` is missing. Then it
-builds PSL1GHT `6e565a7` (2020-11-25, `ppu/` only), tiny3D and libfont3d into it.
+`sdk_setup.sh` downloads the prebuilt ps3dev bundle `nightly-2026-07-26` for the
+host (`ps3dev-macos-ARM64`, `ps3dev-macos-X64` or `ps3dev-linux-X64`, SHA-256
+checked) with `curl` if `~/ps3dev` is missing. Then it builds PSL1GHT `6e565a7`
+(2020-11-25, `ppu/` only), tiny3D and libfont3d into it.
 `build.sh`:
 1. runs the decoder unit test (`test/test_smart.c`) on the Mac;
 2. runs `make pkg`;

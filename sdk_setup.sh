@@ -2,6 +2,7 @@
 # Make $PS3DEV (default ~/ps3dev) an SDK whose apps start on this console:
 # the ps3dev nightly-2026-07-26 bundle (host tools, ppu-gcc 7.2) with PSL1GHT's
 # 2020 runtime (6e565a7) and tiny3D + libfont3d rebuilt against it.
+# Needs: zsh, curl, git, make, shasum (macOS arm64/x86_64 or Linux x86_64).
 #
 # Apps linked with the bundle's own runtime (PSL1GHT 2021+) die before main on
 # HFW 4.93 + PS3HEN 3.6.0: black screen, back to the XMB after ~10 s, even a
@@ -15,12 +16,18 @@ export PATH=$PS3DEV/bin:$PS3DEV/ppu/bin:$PATH
 
 if [[ ! -x $PS3DEV/ppu/bin/ppu-gcc ]]; then
   [[ ${PS3DEV:t} == ps3dev ]] || { print -u2 "PS3DEV must end in /ps3dev (the bundle extracts as ps3dev/)"; exit 1 }
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64)  bundle=ps3dev-macos-ARM64.tar.gz; sum=cf69b6b520a871479dea2b734edcd5023e5ee472f7d28907fc6aaa6ecdf6ae77 ;;
+    Darwin-x86_64) bundle=ps3dev-macos-X64.tar.gz;   sum=30c6189ed0ecfaa0af1941299215c3cc2063ec6babed3dcb83aaa41cc59b39c7 ;;
+    Linux-x86_64)  bundle=ps3dev-linux-X64.tar.gz;   sum=dcbed747e094c6a382dae5b0aacc322a1d4390d9f2849a7d750a96ea398ee8ab ;;
+    *) print -u2 "no ps3dev nightly-2026-07-26 bundle for $(uname -s) $(uname -m)"; exit 1 ;;
+  esac
   d=$(mktemp -d)
-  gh release download nightly-2026-07-26 -R ps3dev/ps3dev -p 'ps3dev-macos-ARM64.tar.gz' -D $d
-  [[ $(shasum -a 256 $d/ps3dev-macos-ARM64.tar.gz | cut -d' ' -f1) == cf69b6b520a871479dea2b734edcd5023e5ee472f7d28907fc6aaa6ecdf6ae77 ]] \
-    || { print -u2 "bundle checksum mismatch"; exit 1 }
+  curl -fL --retry 3 -o $d/$bundle https://github.com/ps3dev/ps3dev/releases/download/nightly-2026-07-26/$bundle
+  [[ $(shasum -a 256 $d/$bundle | cut -d' ' -f1) == $sum ]] \
+    || { print -u2 "bundle checksum mismatch for $bundle"; exit 1 }
   mkdir -p ${PS3DEV:h}
-  tar xzf $d/ps3dev-macos-ARM64.tar.gz -C ${PS3DEV:h}
+  tar xzf $d/$bundle -C ${PS3DEV:h}
   rm -r $d
 fi
 

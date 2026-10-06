@@ -28,10 +28,10 @@
 		279
 	</value>
 	<value name="TITLE" type="string">
-		Test - PSL1GHT
+		HDD/SSD Health
 	</value>
 	<value name="TITLE_ID" type="string">
-		TEST00000
+		HDSH00001
 	</value>
 	<value name="VERSION" type="string">
 		01.01

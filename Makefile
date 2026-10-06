@@ -124,10 +124,6 @@ clean:
 	@rm -fr $(BUILD) *.elf *.self *.pkg
 
 #---------------------------------------------------------------------------------
-run:
-	ps3load $(OUTPUT).self
-
-#---------------------------------------------------------------------------------
 pkg:	$(BUILD) $(OUTPUT).pkg
 
 #---------------------------------------------------------------------------------
@@ -140,7 +136,9 @@ DEPENDS	:=	$(OFILES:.o=.d)
 #---------------------------------------------------------------------------------
 # The CEX self is not used: the pkg rule signs the ELF again with make_self_npdrm.
 # The macOS ARM64 make_self crashes with a bus error when make runs it, so this
-# keeps only the strip and sprxlinker steps of ppu_rules.
+# keeps only the strip and sprxlinker steps of ppu_rules. The empty .self is a
+# stamp for ppu_rules' "%.pkg: %.self"; the real executable is
+# build/pkg/USRDIR/EBOOT.BIN (there is no ps3load target: the stamp is empty).
 $(OUTPUT).self: $(OUTPUT).elf
 	@mkdir -p $(BUILDDIR)
 	@$(STRIP) $< -o $(BUILDDIR)/$(notdir $<)
