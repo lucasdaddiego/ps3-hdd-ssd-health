@@ -26,9 +26,9 @@ jobs:
 
       - uses: ./.github/actions/ps3dev-sdk
 
-      - name: Decoder test, then make pkg
+      - name: Host test, then make pkg
         run: |
-          cc -std=c99 -Wall -Wextra -Werror -o test_smart test/test_smart.c source/smart.c
+          cc -std=c99 -Wall -Wextra -Werror -o test_smart test/test_smart.c source/smart.c source/vendor.c source/compat.c source/qrcodegen.c
           ./test_smart
           make pkg
 

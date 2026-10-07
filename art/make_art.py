@@ -8,6 +8,13 @@ Font: Inter (SIL Open Font License), Inter[opsz,wght].ttf from
 github.com/google/fonts/tree/main/ofl/inter; only the rendered text ends up in
 the PNGs. Everything else is drawn here: a 2.5" drive whose left half is an
 HDD platter and right half SSD flash, crossed by a heartbeat line.
+
+The icon has a transparent background: on the XMB the drive, the words and
+the icon's own trace sit directly on the wallpaper. The wallpaper's trace
+starts right of the XMB title text (TRACE_X0) at the icon trace's screen
+height (TRACE_Y, both measured from a TV photo of the selected icon), so the
+line reads as one that passes behind the title. docs/icon.png is the same
+icon on a dark card, for the README.
 """
 import math, os, sys
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
@@ -18,6 +25,9 @@ SS = 4                                     # supersampling factor
 
 NAVY_TOP, NAVY_BOTTOM = (6, 14, 28), (10, 38, 72)
 GREEN, CYAN = (62, 240, 138), (63, 208, 255)
+TRACE_Y = 0.467          # the trace's screen height: between the two words of the selected XMB icon
+TRACE_X0 = 0.545         # where the wallpaper's trace starts: right of the XMB title and date text
+ICON_TRACE = 0.51        # the trace's height inside the icon (0..1), the same point on screen
 
 def font(path, size, weight):
     f = ImageFont.truetype(path, size)
@@ -56,6 +66,13 @@ def glow_line(base, pts, color, width, blur):
     d = ImageDraw.Draw(base)
     d.line(pts, fill=color + (255,), width=width, joint='curve')
     d.line(pts, fill=(235, 255, 242, 255), width=max(1, width // 3), joint='curve')
+
+def shadow_text(img, xy, s, f, fill, blur):
+    """Text with a soft dark shadow, legible on any XMB wallpaper."""
+    layer = Image.new('RGBA', img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(layer).text((xy[0] + blur * .4, xy[1] + blur * .6), s, font=f, fill=(0, 0, 0, 230))
+    img.alpha_composite(layer.filter(ImageFilter.GaussianBlur(blur)))
+    ImageDraw.Draw(img).text(xy, s, font=f, fill=fill)
 
 def rounded_mask(size, box, r):
     m = Image.new('L', size, 0)
@@ -129,24 +146,29 @@ def draw_drive(img, x0, y0, w):
 
 def icon(font_path):
     W, H = 320 * SS, 176 * SS
-    img = vgradient(W, H, NAVY_TOP, NAVY_BOTTOM).convert('RGBA')
-    m, c = radial_glow(W, H, W * .27, H * .52, W * .32, CYAN, 90)
-    img = Image.composite(c, img.convert('RGB'), m).convert('RGBA')
+    img = Image.new('RGBA', (W, H), (0, 0, 0, 0))
     dw = round(W * .40)
-    dh = draw_drive(img, round(W * .04), round((H - dw * .70) / 2), dw)
-    cy = (H - dh) / 2 + dh * .52
-    glow_line(img, pulse_points(W * .015, W * .47, cy, dh * .40), GREEN, 3 * SS, 4 * SS)
-    d = ImageDraw.Draw(img)
-    tx, room = W * .50, W * .46               # text column: fit "HDD/SSD" to its width
+    dh_nominal = round(dw * .70)
+    y0 = round(H * ICON_TRACE - dh_nominal * .52)       # the drive sits so its trace is at ICON_TRACE
+    dh = draw_drive(img, round(W * .04), y0, dw)
+    cy = y0 + dh * .52
+    pts = pulse_points(0, W * .47, cy, dh * .40) + [(W, cy)]   # the pulse over the platter, then flat to the edge
+    glow_line(img, pts, GREEN, 4 * SS, 4 * SS)
+    tx, room = W * .50, W * .48               # text column: fit "HDD/SSD" to its width
     size = 40 * SS
     while font(font_path, size, 800).getlength('HDD/SSD') > room:
         size -= SS
     f1, f2 = font(font_path, size, 800), font(font_path, round(size * .80), 600)
-    tw = f1.getlength('HDD/SSD')
-    d.text((tx, H * .24), 'HDD/SSD', font=f1, fill=(255, 255, 255, 255))
-    d.text((tx + SS, H * .50), 'Health', font=f2, fill=GREEN + (255,))
-    d.rounded_rectangle((tx + SS, H * .74, tx + tw, H * .74 + 4 * SS), 2 * SS, fill=CYAN + (200,))
-    return img.resize((320, 176), Image.LANCZOS).convert('RGB')
+    shadow_text(img, (tx, H * .10), 'HDD/SSD', f1, (255, 255, 255, 255), 3 * SS)      # above the wallpaper's trace
+    shadow_text(img, (tx + SS, H * .58), 'Health', f2, GREEN + (255,), 3 * SS)       # below it
+    return img.resize((320, 176), Image.LANCZOS)
+
+def icon_card(ic):
+    """The icon on a dark card, for the README (GitHub's page is white)."""
+    W, H = ic.size
+    card = vgradient(W, H, NAVY_TOP, NAVY_BOTTOM).convert('RGBA')
+    card.alpha_composite(ic)
+    return card.convert('RGB')
 
 def background():
     W, H = 1920 * 2, 1080 * 2
@@ -161,10 +183,14 @@ def background():
         bd.line(pts, fill=(120, 200, 255, alpha), width=36)
         img.alpha_composite(band.filter(ImageFilter.GaussianBlur(28)))
     dw = round(W * .36)
-    x0, y0 = round(W * .56), round(H * .25)
+    x0 = round(W * .56)
+    y0 = round(H * TRACE_Y - round(dw * .70) * .52)     # the trace at TRACE_Y, like the icon's
     dh = draw_drive(img, x0, y0, dw)
     cy = y0 + dh * .52
-    glow_line(img, pulse_points(W * .30, W * .98, cy, dh * .55), GREEN, 10, 18)
+    # the trace from TRACE_X0 to the right edge, its spike over the platter (x0 + .265 dw)
+    shape = [(TRACE_X0, 0), (.575, 0), (.595, -.12), (.615, 0), (.635, 0), (.650, .28), (.668, -1),
+             (.690, .55), (.708, 0), (.75, 0), (.78, -.22), (.815, 0), (.98, 0)]
+    glow_line(img, [(W * fx, cy + fy * dh * .55) for fx, fy in shape], GREEN, 10, 18)
     # fade the left side, where the XMB draws its menu
     fade = Image.new('L', (W, 1))
     for x in range(W):
@@ -178,8 +204,9 @@ if __name__ == '__main__':
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     os.makedirs(OUT, exist_ok=True)
-    icon(sys.argv[1]).save(os.path.join(OUT, 'ICON0.PNG'), optimize=True)
+    ic = icon(sys.argv[1])
+    ic.save(os.path.join(OUT, 'ICON0.PNG'), optimize=True)
+    icon_card(ic).save(os.path.join(HERE, '..', 'docs', 'icon.png'), optimize=True)
     background().save(os.path.join(OUT, 'PIC1.PNG'), optimize=True)
-    for n in ('ICON0.PNG', 'PIC1.PNG'):
-        p = os.path.join(OUT, n)
-        print(n, Image.open(p).size, os.path.getsize(p), 'bytes')
+    for p in (os.path.join(OUT, 'ICON0.PNG'), os.path.join(OUT, 'PIC1.PNG'), os.path.join(HERE, '..', 'docs', 'icon.png')):
+        print(os.path.relpath(p, os.path.join(HERE, '..')), Image.open(p).size, Image.open(p).mode, os.path.getsize(p), 'bytes')

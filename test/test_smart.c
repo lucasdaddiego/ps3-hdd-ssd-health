@@ -1,8 +1,12 @@
-/* Mac-side test of source/smart.c with synthetic sectors laid out as ACS-3 says.
- *   cc -std=c99 -Wall -o /tmp/test_smart test/test_smart.c source/smart.c && /tmp/test_smart */
+/* Mac-side test of the pure C layer (smart.c, vendor.c, compat.c, qrcodegen.c)
+ * with synthetic sectors laid out as ACS-3 says. build.sh and CI run it. */
 #include <stdio.h>
 #include <string.h>
 #include "../source/smart.h"
+#include "../source/vendor.h"
+#include "../source/compat.h"
+#include "../source/version.h"
+#include "../source/qrcodegen.h"
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); fails++; } } while (0)
@@ -97,13 +101,13 @@ int main(void)
     CHECK(s.checksum == 1 && s.thresh_checksum == 1 && (s.offline_caps & 0x10));
 
     char why[256];
-    CHECK(smart_health(&s, NULL, why, sizeof why) == HEALTH_OK);
+    CHECK(smart_health(&s, NULL, 0, why, sizeof why) == HEALTH_OK);
     data[2 + 12 + 5] = 3; seal(data);  /* 3 reallocated sectors */
     smart_parse(data, th, &s);
-    CHECK(smart_health(&s, NULL, why, sizeof why) == HEALTH_WARN && strstr(why, "Reallocated sectors = 3"));
+    CHECK(smart_health(&s, NULL, 0, why, sizeof why) == HEALTH_WARN && strstr(why, "Reallocated sectors = 3"));
     data[2 + 3] = 40; seal(data);      /* attribute 1 falls to 40, threshold 50 */
     smart_parse(data, th, &s);
-    CHECK(smart_health(&s, NULL, why, sizeof why) == HEALTH_FAIL && strstr(why, "1 Raw read error rate at threshold"));
+    CHECK(smart_health(&s, NULL, 0, why, sizeof why) == HEALTH_FAIL && strstr(why, "1 Raw read error rate at threshold"));
 
     memset(log, 0, 512);
     log[0] = 1;
@@ -120,7 +124,7 @@ int main(void)
     CHECK(!strcmp(selftest_status_text(l.e[0].status), "FAILED (read)"));
     data[2 + 3] = 100; data[2 + 12 + 5] = 0; seal(data);
     smart_parse(data, th, &s);
-    CHECK(smart_health(&s, &l, why, sizeof why) == HEALTH_WARN && strstr(why, "last self-test failed"));
+    CHECK(smart_health(&s, &l, 0, why, sizeof why) == HEALTH_WARN && strstr(why, "last self-test failed"));
 
     char masked[21];
     serial_mask("AB12345678", masked, sizeof masked);
@@ -133,6 +137,103 @@ int main(void)
     CHECK(strlen(masked) == 7);
     CHECK(smart_counter(10) && smart_counter(199) && !smart_counter(9));
     CHECK(!strcmp(smart_attr_name(193), "Load cycles"));
+
+    /* temperature warning: 33 C is fine for an SSD, a 65 C limit trips at 65 */
+    CHECK(smart_health(&s, NULL, TEMP_LIMIT_SSD, why, sizeof why) == HEALTH_OK);
+    attr(data, 3, 194, 67, 50, 0x0032001E0041ull); seal(data);   /* 65 C now */
+    smart_parse(data, th, &s);
+    CHECK(s.temperature == 65);
+    CHECK(smart_health(&s, NULL, TEMP_LIMIT_SSD, why, sizeof why) == HEALTH_WARN && strstr(why, "temperature 65 C"));
+    CHECK(smart_health(&s, NULL, 0, why, sizeof why) == HEALTH_OK);
+
+    /* vendors */
+    CHECK(vendor_detect("Samsung SSD 870 EVO 1TB") == VENDOR_SAMSUNG);
+    CHECK(vendor_detect("MZ7LN512HMJP-000L7") == VENDOR_SAMSUNG);
+    CHECK(vendor_detect("CT1000MX500SSD1") == VENDOR_MICRON);
+    CHECK(vendor_detect("KINGSTON SA400S37480G") == VENDOR_KINGSTON);
+    CHECK(vendor_detect("WDC WD10JPVX-22JC3T0") == VENDOR_WD);
+    CHECK(vendor_detect("WDS100T2B0A-00SM50") == VENDOR_SANDISK);
+    CHECK(vendor_detect("ST1000LM035-1RK172") == VENDOR_SEAGATE);
+    CHECK(vendor_detect("INTEL SSDSC2KW512G8") == VENDOR_INTEL);
+    CHECK(vendor_detect("TOSHIBA MQ01ABD100") == VENDOR_TOSHIBA);
+    CHECK(vendor_detect("Dahua V800 2.5 inch SATA 1TB SSD") == VENDOR_MAXIO);
+    CHECK(vendor_detect("DHI-SSD-V800S1TB") == VENDOR_MAXIO);
+    CHECK(vendor_detect("Some Drive") == VENDOR_UNKNOWN && vendor_detect("") == VENDOR_UNKNOWN);
+    CHECK(!strcmp(vendor_attr_name(VENDOR_MAXIO, 161), "Valid spare blocks"));
+    CHECK(!strcmp(vendor_attr_name(VENDOR_MAXIO, 5), "Reallocated sectors"));      /* generic fallback */
+    CHECK(!strcmp(vendor_attr_name(VENDOR_UNKNOWN, 161), "Vendor attribute"));
+    CHECK(!strcmp(vendor_attr_name(VENDOR_SEAGATE, 1), "Raw read error rate (packed)"));
+    CHECK(vendor_get(VENDOR_SAMSUNG)->writes_unit == UNIT_LBA && vendor_get(VENDOR_INTEL)->writes_unit == UNIT_MIB32);
+    CHECK(vendor_get(99)->vendor == VENDOR_UNKNOWN);
+
+    /* summary: Samsung layout, 241 in LBAs, 177 = life */
+    memset(data, 0, 512);
+    attr(data, 0, 9, 100, 100, 0x0001000003E8ull);   /* 1000 h, junk above the low 32 bits */
+    attr(data, 1, 12, 100, 100, 250);
+    attr(data, 2, 177, 97, 97, 40);
+    attr(data, 3, 241, 100, 100, 4000000000ull);    /* 4e9 LBAs = 2.048 TB */
+    seal(data);
+    smart_parse(data, NULL, &s);
+    smart_summary m;
+    smart_summarize(&s, 1, VENDOR_SAMSUNG, &m);
+    CHECK(m.hours == 1000 && m.cycles == 250 && m.life_left == 97 && m.life_id == 177);
+    CHECK(m.writes_id == 241 && m.writes_unit == UNIT_LBA && m.tb_written > 2.047 && m.tb_written < 2.049);
+    CHECK(m.temp_limit == TEMP_LIMIT_SSD);
+    smart_summarize(&s, 0, VENDOR_UNKNOWN, &m);
+    CHECK(m.life_left == -1 && m.writes_id == 0 && m.tb_written < 0 && m.temp_limit == TEMP_LIMIT_HDD);
+    smart_summarize(&s, 1, VENDOR_MAXIO, &m);
+    CHECK(m.writes_id == 241 && m.writes_unit == UNIT_MIB32 && m.writes_raw == 4000000000ull);
+    smart_summarize(&s, 1, VENDOR_KINGSTON, &m);
+    CHECK(m.writes_id == 241 && m.writes_unit == UNIT_NONE && m.tb_written < 0);
+    /* the Dahua test drive: no 169, life in 202, 241 in 32 MiB units */
+    memset(data, 0, 512);
+    attr(data, 0, 9, 96, 100, 921); attr(data, 1, 202, 100, 100, 100); attr(data, 2, 241, 100, 100, 72132); seal(data);
+    smart_parse(data, NULL, &s);
+    smart_summarize(&s, 1, VENDOR_MAXIO, &m);
+    CHECK(m.life_left == 100 && m.life_id == 202 && m.tb_written > 2.41 && m.tb_written < 2.43);
+    memset(data, 0, 512); seal(data);
+    smart_parse(data, NULL, &s);
+    smart_summarize(&s, 1, VENDOR_SAMSUNG, &m);
+    CHECK(m.hours == -1 && m.cycles == -1 && m.life_left == -1);
+
+    /* delta: raw now - raw before, never for temperatures */
+    smart_data before, now;
+    memset(data, 0, 512);
+    attr(data, 0, 9, 100, 100, 1000); attr(data, 1, 5, 100, 100, 0); attr(data, 2, 194, 60, 50, 40); seal(data);
+    smart_parse(data, NULL, &before);
+    attr(data, 0, 9, 100, 100, 1012); attr(data, 1, 5, 100, 100, 2); attr(data, 2, 194, 60, 50, 45);
+    attr(data, 3, 12, 100, 100, 7); seal(data);
+    smart_parse(data, NULL, &now);
+    long long dl = 0;
+    CHECK(smart_delta(&now, &before, 9, &dl) && dl == 12);
+    CHECK(smart_delta(&now, &before, 5, &dl) && dl == 2);
+    CHECK(!smart_delta(&now, &before, 194, &dl));      /* temperature packs min/max */
+    CHECK(!smart_delta(&now, &before, 12, &dl));       /* only in one side */
+    CHECK(smart_delta(&before, &now, 9, &dl) && dl == -12);
+
+    /* issue form URL */
+    char enc[64], url[2400];
+    CHECK(url_encode("a b/c=d~", enc, sizeof enc) == 14 && !strcmp(enc, "a%20b%2Fc%3Dd~"));
+    CHECK(url_encode("abcdefgh", enc, 6) == 2 && !strcmp(enc, "ab"));   /* bounded: room for one %XX and the NUL */
+    const form_field f[] = {{"firmware", "4.93 (Europe)"}, {"health", "OK\nhours 921"}};
+    int n = issue_form_url("compat-report.yml", "Compat: X on 4.93", f, 2, url, sizeof url);
+    CHECK(n > 0 && n == (int)strlen(url));
+    CHECK(!strncmp(url, APP_REPO "/issues/new?template=compat-report.yml&title=Compat%3A%20X%20on%204.93", 
+                   strlen(APP_REPO) + 58));
+    CHECK(strstr(url, "&firmware=4.93%20%28Europe%29&health=OK%0Ahours%20921") != NULL);
+    CHECK(issue_form_url("t.yml", "title", f, 2, url, 40) == -1);   /* does not fit */
+    /* no template: a blank issue, title first, then body (what the mobile app fills) */
+    const form_field b[] = {{"body", "console: x\nfirmware: 4.93"}};
+    n = issue_form_url(NULL, "Compat: X on 4.93", b, 1, url, sizeof url);
+    CHECK(n > 0 && !strcmp(url, APP_REPO "/issues/new?title=Compat%3A%20X%20on%204.93&body=console%3A%20x%0Afirmware%3A%204.93"));
+    /* a real-size link fits a QR code at version 25 */
+    char big[700];
+    memset(big, 'x', sizeof big - 1); big[sizeof big - 1] = 0;
+    const form_field g[] = {{"health", big}};
+    n = issue_form_url("compat-report.yml", "t", g, 1, url, sizeof url);
+    static uint8_t qr[qrcodegen_BUFFER_LEN_FOR_VERSION(25)], tmp[qrcodegen_BUFFER_LEN_FOR_VERSION(25)];
+    CHECK(n > 700 && qrcodegen_encodeText(url, tmp, qr, qrcodegen_Ecc_LOW, 1, 25, qrcodegen_Mask_AUTO, true));
+    CHECK(qrcodegen_getSize(qr) >= 21 && qrcodegen_getSize(qr) <= 117);
 
     printf(fails ? "%d check(s) failed\n" : "all checks passed\n", fails);
     return fails != 0;

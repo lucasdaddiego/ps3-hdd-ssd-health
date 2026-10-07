@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "smart.h"
+#include "vendor.h"
 
 static unsigned word(const uint8_t *b, int i, int swapped)
 {
@@ -271,7 +272,7 @@ static void add_why(char *why, int len, const char *msg)
 
 /* FAIL: a normalized value at or below its threshold now. WARN: below it in the
  * past, a non-zero error counter (smart_counter), or a failed last self-test. */
-int smart_health(const smart_data *s, const selftest_log *log, char *why, int whylen)
+int smart_health(const smart_data *s, const selftest_log *log, int temp_limit, char *why, int whylen)
 {
     int level = HEALTH_OK;
     char msg[96];
@@ -304,6 +305,59 @@ int smart_health(const smart_data *s, const selftest_log *log, char *why, int wh
             if (level < HEALTH_WARN) level = HEALTH_WARN;
         }
     }
+    if (temp_limit > 0 && s->temperature >= temp_limit) {
+        snprintf(msg, sizeof msg, "temperature %d C (limit %d)", s->temperature, temp_limit);
+        add_why(why, whylen, msg);
+        if (level < HEALTH_WARN) level = HEALTH_WARN;
+    }
     if (level == HEALTH_OK) add_why(why, whylen, "no attribute at threshold, no error counts");
     return level;
+}
+
+const smart_attr *smart_find(const smart_data *s, uint8_t id)
+{
+    for (int i = 0; i < s->count; i++)
+        if (s->a[i].id == id) return &s->a[i];
+    return NULL;
+}
+
+/* Hours and cycles come from the low 32 bits: some vendors pack extra data in
+ * the upper bytes of attribute 9. TB written only when the vendor states the unit. */
+void smart_summarize(const smart_data *s, int is_ssd, int vendor, smart_summary *o)
+{
+    const vendor_info *v = vendor_get(vendor);
+    const smart_attr *a;
+    memset(o, 0, sizeof *o);
+    o->hours = o->cycles = o->life_left = -1;
+    o->tb_written = -1;
+    o->temp_limit = is_ssd ? TEMP_LIMIT_SSD : TEMP_LIMIT_HDD;
+    if ((a = smart_find(s, 9))) o->hours = (int)(a->raw & 0xFFFFFFFFull);
+    if ((a = smart_find(s, 12))) o->cycles = (int)(a->raw & 0xFFFFFFFFull);
+    int life_ids[2] = {v->life_id, v->life_id2};
+    for (int k = 0; k < 2 && o->life_left < 0; k++)
+        if (life_ids[k] && (a = smart_find(s, life_ids[k]))) {
+            o->life_id = life_ids[k];
+            o->life_left = a->value <= 100 ? a->value : -1;
+        }
+    if (v->writes_id && (a = smart_find(s, v->writes_id))) {
+        o->writes_id = v->writes_id;
+        o->writes_unit = v->writes_unit;
+        o->writes_raw = a->raw;
+        double bytes = -1;
+        if (v->writes_unit == UNIT_LBA) bytes = (double)a->raw * 512.0;
+        else if (v->writes_unit == UNIT_GIB) bytes = (double)a->raw * 1073741824.0;
+        else if (v->writes_unit == UNIT_MIB32) bytes = (double)a->raw * 33554432.0;
+        if (bytes >= 0) o->tb_written = bytes / 1e12;
+    }
+}
+
+/* Raw difference now - prev for one attribute; 1 when both sides have it.
+ * Temperatures pack min/max above the current value, so they are never compared. */
+int smart_delta(const smart_data *now, const smart_data *prev, uint8_t id, long long *delta)
+{
+    if (id == 194 || id == 190) return 0;
+    const smart_attr *a = smart_find(now, id), *b = smart_find(prev, id);
+    if (!a || !b) return 0;
+    *delta = (long long)a->raw - (long long)b->raw;
+    return 1;
 }

@@ -19,6 +19,8 @@
 #include <sys/file.h>
 #include <sys/systime.h>
 #include "ata.h"
+#include "vendor.h"
+#include "version.h"
 
 #define ATA_HDD        0x0101000000000007ULL
 #define LV1_ATA        2        /* LV1_STORAGE_SEND_ATA_COMMAND */
@@ -49,12 +51,14 @@ static s32 storage_execute_device_command(u32 h, u64 cmd, void *in, u64 inlen, v
     lv2syscall7(616, h, cmd, (u64)in, inlen, (u64)out, outlen, (u64)status);
     return_to_user_prog(s32);
 }
+/* 383 sys_game_get_temperature: 0 = Cell, 1 = RSX; degrees in the top byte. */
+static s32 get_temperature(u32 id, u32 *t) { lv2syscall2(383, id, (u64)t); return_to_user_prog(s32); }
 
 /* ---- journal ------------------------------------------------------------ */
 
 enum { J_NONE, J_PENDING, J_OK, J_BAD, J_FROZEN };
 static struct { char name[24]; int state; } jst[32];
-static int jn;
+static int jn, jloaded;
 
 static int *jstate(const char *name)
 {
@@ -76,6 +80,17 @@ static void write_file(const char *path, const void *data, u64 len, int append)
     sysLv2FsClose(fd);
 }
 
+/* Reads up to n bytes; returns the count, -1 when the file is missing. */
+static int read_file(const char *path, void *data, int n)
+{
+    s32 fd;
+    u64 r = 0;
+    if (sysLv2FsOpen(path, SYS_O_RDONLY, &fd, 0, NULL, 0)) return -1;
+    sysLv2FsRead(fd, data, n, &r);
+    sysLv2FsClose(fd);
+    return (int)r;
+}
+
 static void jappend(const char *fmt, const char *name, s32 rc, int ok)
 {
     char line[96];
@@ -93,6 +108,7 @@ static void journal_load(void)
     u64 n = 0, size = 0, pos = 0;
     char *first = text;
     jn = 0;
+    jloaded = 1;
     if (sysLv2FsOpen(JOURNAL, SYS_O_RDONLY, &fd, 0, NULL, 0)) return;
     if (sysLv2FsLSeek64(fd, 0, SEEK_END, &size) == 0 && size > sizeof text - 1) {
         sysLv2FsLSeek64(fd, size - (sizeof text - 1), SEEK_SET, &pos);
@@ -221,11 +237,22 @@ static void do_devinfo(drive_state *d)
 
 void drive_probe(drive_state *d, void (*progress)(const char *msg))
 {
+    int have_prev = d->have_prev;
+    smart_data prev = d->prev;
+    char prev_when[sizeof d->prev_when], prev_model[sizeof d->prev_model];
+    memcpy(prev_when, d->prev_when, sizeof prev_when);
+    memcpy(prev_model, d->prev_model, sizeof prev_model);
     memset(d, 0, sizeof *d);
+    d->have_prev = have_prev;
+    d->prev = prev;
+    memcpy(d->prev_when, prev_when, sizeof prev_when);
+    memcpy(d->prev_model, prev_model, sizeof prev_model);
+    d->cpu_temp = d->rsx_temp = -1;
     journal_load();
     d->identify_frozen = *jstate("identify") == J_FROZEN;
     d->smart_frozen = *jstate("smart_data") == J_FROZEN;
     d->selftest_frozen = *jstate("selftest_start") == J_FROZEN;
+    d->speed_frozen = *jstate("read_speed") == J_FROZEN;
 
     progress("Reading the drive size (syscall 609)");
     if (jstart("devinfo")) { do_devinfo(d); jdone("devinfo", d->info_rc, d->info_rc == 0); }
@@ -250,8 +277,121 @@ void drive_probe(drive_state *d, void (*progress)(const char *msg))
     memcpy(d->identify, buf, 512);
     d->have_identify = 1;
     ata_parse_identify(d->identify, NULL, &d->id);
+    d->vendor = vendor_detect(d->id.model);
+    if (d->have_prev && d->prev_model[0] && !model_match(d->prev_model, d->id.model))
+        d->have_prev = 0;                    /* another drive: its old counters mean nothing here */
     progress("Reading SMART data");
     drive_read_smart(d, 1);
+}
+
+/* The last read saved before this start: the baseline of the delta column.
+ * Runs before drive_probe, which keeps these fields. */
+void drive_load_prev(drive_state *d)
+{
+    static uint8_t prev[512];
+    char when[96];
+    int n;
+    d->have_prev = 0;
+    d->prev_model[0] = 0;
+    if (read_file(APP_DIR "/smart.bin", prev, 512) != 512) return;
+    if (smart_parse(prev, NULL, &d->prev)) return;
+    n = read_file(APP_DIR "/smart.when", when, sizeof when - 1);
+    if (n < 0) n = 0;
+    when[n] = 0;
+    for (char *c = when; *c; c++) if (*c == '\n' || *c == '\r') *c = 0;
+    char *sep = strstr(when, " | ");
+    if (sep) { *sep = 0; snprintf(d->prev_model, sizeof d->prev_model, "%s", sep + 3); }
+    snprintf(d->prev_when, sizeof d->prev_when, "%s", when[0] ? when : "an earlier run");
+    d->have_prev = 1;
+}
+
+/* Demo mode: the four sectors from DEMO_DIR stand in for the drive. */
+int drive_demo_load(drive_state *d)
+{
+    memset(d, 0, sizeof *d);
+    d->cpu_temp = d->rsx_temp = -1;
+    d->demo = 1;
+    if (read_file(DEMO_DIR "/identify.bin", d->identify, 512) != 512) return -1;
+    if (read_file(DEMO_DIR "/smart.bin", d->smart, 512) != 512) return -1;
+    d->have_thresh = read_file(DEMO_DIR "/thresh.bin", d->thresh, 512) == 512;
+    d->have_stlog = read_file(DEMO_DIR "/selftest.bin", d->stlog, 512) == 512;
+    if (ata_parse_identify(d->identify, NULL, &d->id)) return -1;
+    d->have_identify = d->have_smart = d->ata_ok = 1;
+    d->vendor = vendor_detect(d->id.model);
+    snprintf(d->identify_note, sizeof d->identify_note, "DEMO: sectors from %s", DEMO_DIR);
+    smart_parse(d->smart, d->have_thresh ? d->thresh : NULL, &d->s);
+    if (d->have_stlog) selftest_parse(d->stlog, &d->log);
+    smart_summarize(&d->s, d->id.rotation == 1, d->vendor, &d->sum);
+    return 0;
+}
+
+/* Firmware from /dev_flash/vsh/etc/version.txt ("release:04.9300:") and the
+ * Cell and RSX temperatures (syscall 383, journaled like the drive commands).
+ * (The IDPS, syscall 870, for the region: EPERM on HEN, so not used.) */
+void console_info(drive_state *d)
+{
+    char text[256];
+    int n = read_file("/dev_flash/vsh/etc/version.txt", text, sizeof text - 1);
+    if (!jloaded) journal_load();            /* demo mode comes here without drive_probe */
+    d->firmware[0] = 0;
+    d->cpu_temp = d->rsx_temp = -1;
+    if (n > 0) {
+        text[n] = 0;
+        char *r = strstr(text, "release:");
+        unsigned major = 0;
+        char minor[8] = "";
+        if (r && sscanf(r + 8, "%u.%4[0-9]", &major, minor) == 2)
+            snprintf(d->firmware, sizeof d->firmware, "%u.%.2s", major, minor);
+    }
+    if (jstart("temps")) {
+        u32 t = 0;
+        d->temps_rc = get_temperature(0, &t);
+        if (d->temps_rc == 0) d->cpu_temp = (int)(t >> 24);
+        if (d->temps_rc == 0 && get_temperature(1, &t) == 0) d->rsx_temp = (int)(t >> 24);
+        jdone("temps", d->temps_rc, d->temps_rc == 0);
+    }
+}
+
+/* Writes a 64 MB file (64 000 000 bytes) in APP_DIR in 1 MB pieces, reads it
+ * back, deletes it.
+ * Both go through the LV2 file system, the path games use for their data, so
+ * no new syscall. (Raw sector reads, syscall 602, come back ENXIO on HEN.) */
+int drive_speed_test(drive_state *d)
+{
+    static uint8_t sbuf[1000000] __attribute__((aligned(128)));   /* 64 x 1 MB = 64 MB, as shown */
+    static const char *p = APP_DIR "/speed.tmp";
+    const int pieces = 64;
+    if (d->demo) return -1;
+    d->speed_frozen = *jstate("speed_file") == J_FROZEN;
+    if (d->speed_frozen) return -1;
+    if (!jstart("speed_file")) return -1;
+    for (unsigned i = 0; i < sizeof sbuf; i += 4) *(uint32_t *)(sbuf + i) = i * 2654435761u;
+    s32 fd = -1, rc;
+    u64 n = 0, t0 = 0, n0 = 0, t1 = 0, n1 = 0, t2 = 0, n2 = 0;
+    d->speed_done = 0;
+    d->speed_mb = (double)pieces * sizeof sbuf / 1e6;
+    sysGetCurrentTime(&t0, &n0);
+    rc = sysLv2FsOpen(p, SYS_O_WRONLY | SYS_O_CREAT | SYS_O_TRUNC, &fd, 0666, NULL, 0);
+    for (int k = 0; rc == 0 && k < pieces; k++) {
+        rc = sysLv2FsWrite(fd, sbuf, sizeof sbuf, &n);
+        if (rc == 0 && n != sizeof sbuf) rc = -1;
+    }
+    if (fd >= 0) { sysLv2FsFsync(fd); sysLv2FsClose(fd); fd = -1; }
+    sysGetCurrentTime(&t1, &n1);
+    if (rc == 0) rc = sysLv2FsOpen(p, SYS_O_RDONLY, &fd, 0, NULL, 0);
+    for (int k = 0; rc == 0 && k < pieces; k++) {
+        rc = sysLv2FsRead(fd, sbuf, sizeof sbuf, &n);
+        if (rc == 0 && n != sizeof sbuf) rc = -1;
+    }
+    if (fd >= 0) sysLv2FsClose(fd);
+    sysGetCurrentTime(&t2, &n2);
+    sysLv2FsUnlink(p);
+    d->speed_wsec = (double)(t1 - t0) + (double)((s64)n1 - (s64)n0) / 1e9;
+    d->speed_rsec = (double)(t2 - t1) + (double)((s64)n2 - (s64)n1) / 1e9;
+    d->speed_rc = rc;
+    d->speed_done = rc == 0;
+    jdone("speed_file", rc, d->speed_done);
+    return rc;
 }
 
 static int smart_read(drive_state *d, const char *name, uint8_t features, uint16_t lba_low, uint8_t *dst, int *have)
@@ -270,22 +410,26 @@ static int smart_read(drive_state *d, const char *name, uint8_t features, uint16
 /* full = 0: SMART data only (self-test progress); 1: also thresholds and the self-test log. */
 int drive_read_smart(drive_state *d, int full)
 {
-    if (!d->ata_ok) return -1;
+    if (!d->ata_ok || d->demo) return -1;
     d->smart_frozen = *jstate("smart_data") == J_FROZEN;
     if (d->smart_frozen) return -1;
+    if (d->have_smart) { d->last = d->s; d->have_last = 1; }
     d->smart_rc = smart_read(d, "smart_data", 0xD0, 0, d->smart, &d->have_smart);
     if (full) {
         d->thresh_rc = smart_read(d, "smart_thresh", 0xD1, 0, d->thresh, &d->have_thresh);
         d->stlog_rc = smart_read(d, "selftest_log", 0xD5, 0x06, d->stlog, &d->have_stlog);
     }
-    if (d->have_smart) smart_parse(d->smart, d->have_thresh ? d->thresh : NULL, &d->s);
+    if (d->have_smart) {
+        smart_parse(d->smart, d->have_thresh ? d->thresh : NULL, &d->s);
+        smart_summarize(&d->s, d->id.rotation == 1, d->vendor, &d->sum);
+    }
     if (d->have_stlog) selftest_parse(d->stlog, &d->log);
     return d->smart_rc;
 }
 
 int drive_can_selftest(const drive_state *d)
 {
-    return d->ata_ok && d->have_smart && !d->selftest_frozen &&
+    return d->ata_ok && !d->demo && d->have_smart && !d->selftest_frozen &&
            ((d->s.offline_caps & 0x10) || d->id.selftest_supported);
 }
 
@@ -309,7 +453,7 @@ void drive_close(drive_state *d)
 
 /* ---- report --------------------------------------------------------------- */
 
-static char rep[16384];
+static char rep[32768];
 static int rlen;
 
 static void out(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -324,18 +468,130 @@ static void out(const char *fmt, ...)
 
 static const char *yesno(int v) { return v ? "yes" : "no"; }
 
-int report_write(const drive_state *d, char *path, int len)
+const char *writes_unit_text(int unit)
+{
+    return unit == UNIT_LBA ? "512-byte LBAs" : unit == UNIT_GIB ? "GiB" : unit == UNIT_MIB32 ? "32 MiB units" : "unit unknown for this vendor";
+}
+
+void hours_text(int hours, char *out, int n)
+{
+    if (hours < 0) snprintf(out, n, "not reported");
+    else if (hours >= 8760) snprintf(out, n, "%d h (%d y %d d)", hours, hours / 8760, hours % 8760 / 24);
+    else snprintf(out, n, "%d h (%d d)", hours, hours / 24);
+}
+
+static const char *health_text(int h) { return h == HEALTH_OK ? "OK" : h == HEALTH_WARN ? "WARN" : "FAIL"; }
+
+/* The changed attributes since prev: "9 +3, 12 +2". 0 when nothing changed. */
+static int delta_text(const smart_data *now, const smart_data *prev, char *out, int n)
+{
+    int j = 0, changed = 0;
+    out[0] = 0;
+    for (int i = 0; i < now->count; i++) {
+        long long dl;
+        if (!smart_delta(now, prev, now->a[i].id, &dl) || !dl) continue;
+        changed++;
+        if (j < n) j += snprintf(out + j, n - j, "%s%u %+lld", j ? ", " : "", now->a[i].id, dl);
+    }
+    return changed;
+}
+
+int compat_title(const drive_state *d, char *out, int n)
+{
+    return snprintf(out, n, "Compat: %s on %s", d->have_identify ? d->id.model : "drive not read",
+                    d->firmware[0] ? d->firmware : "unknown firmware");
+}
+
+static int app(char *out, int n, int j, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
+static int app(char *out, int n, int j, const char *fmt, ...)
+{
+    if (j >= n - 1) return n - 1;
+    va_list ap;
+    va_start(ap, fmt);
+    int k = vsnprintf(out + j, n - j, fmt, ap);
+    va_end(ap);
+    if (k < 0) return j;
+    return j + k < n ? j + k : n - 1;
+}
+
+static const char *drive_type_text(const ata_identity *i)
+{
+    return i->rotation == 1 ? "SSD" : i->rotation > 0x400 && i->rotation < 0xFFFF ? "HDD" : "type ?";
+}
+
+/* One line of the compatibility report: firmware, drive, result or health
+ * (the same ids as the fields of .github/ISSUE_TEMPLATE/compat-report.yml).
+ * Nothing that identifies the console or the drive: no serial number. */
+static int compat_field(const drive_state *d, const char *id, char *out, int n)
+{
+    int j = 0;
+    out[0] = 0;
+    if (!strcmp(id, "firmware")) {
+        j = app(out, n, j, "%s", d->firmware[0] ? d->firmware : "unknown");
+        j = app(out, n, j, ", app %s%s", APP_VERSION, d->demo ? " demo mode" : "");
+    } else if (!strcmp(id, "drive")) {
+        if (!d->have_identify) return app(out, n, j, "not read");
+        const ata_identity *i = &d->id;
+        j = app(out, n, j, "%s, fw %s, %.0f GB, %s, SATA %d (max %d)", i->model, i->firmware,
+                (double)i->sectors * i->logical_size / 1e9, drive_type_text(i), i->sata_cur_gen, i->sata_max_gen);
+    } else if (!strcmp(id, "result")) {
+        j = app(out, n, j, "609 rc 0x%x, 600 rc 0x%x, IDENTIFY %s, SMART %s, log %s", (unsigned)d->info_rc,
+                (unsigned)d->open_rc, d->identify_frozen ? "froze" : d->ata_ok ? "ok" : "refused",
+                d->smart_frozen ? "froze" : d->have_smart ? "ok" : "no", d->have_stlog ? "ok" : "no");
+        if (d->have_stlog && d->log.count)
+            j = app(out, n, j, ", last self-test %s at %u h", selftest_status_text(d->log.e[0].status), d->log.e[0].hours);
+        if (d->speed_done)
+            j = app(out, n, j, ", file write %.0f / read %.0f MB/s", d->speed_mb / (d->speed_wsec > 0 ? d->speed_wsec : 1),
+                    d->speed_mb / (d->speed_rsec > 0 ? d->speed_rsec : 1));
+        else if (d->speed_frozen) j = app(out, n, j, ", speed test froze");
+        else if (d->speed_rc) j = app(out, n, j, ", speed test rc 0x%x", (unsigned)d->speed_rc);
+    } else if (!strcmp(id, "health")) {
+        if (!d->have_smart) return app(out, n, j, "no SMART data");
+        char why[256], h[48];
+        int hl = smart_health(&d->s, d->have_stlog ? &d->log : NULL, d->sum.temp_limit, why, sizeof why);
+        hours_text(d->sum.hours, h, sizeof h);
+        j = app(out, n, j, "%s (%s)\nhours %s, cycles %d, temp %d C\n", health_text(hl), why, h, d->sum.cycles,
+                d->s.temperature);
+        static const uint8_t ids[] = {5, 187, 196, 197, 198, 199};
+        for (unsigned k = 0; k < sizeof ids; k++) {
+            const smart_attr *a = smart_find(&d->s, ids[k]);
+            if (a) j = app(out, n, j, "%u=%llu ", ids[k], (unsigned long long)(a->raw & 0xFFFFFFFFull));
+        }
+    }
+    return j;
+}
+
+/* The same four fields as text, for the report and the share page. */
+int compat_body(const drive_state *d, char *out, int n)
+{
+    static const char *ids[] = {"firmware", "drive", "result", "health"};
+    char v[512];
+    int j = 0;
+    j = app(out, n, j, "console: CECH-____, HEN/CFW ____ (you fill these in)\n");
+    for (unsigned k = 0; k < 4; k++) {
+        compat_field(d, ids[k], v, sizeof v);
+        j = app(out, n, j, "%s: %s\n", ids[k], v);
+    }
+    return j;
+}
+
+int report_write(drive_state *d, char *path, int len)
 {
     u64 sec = 0, nsec = 0;
     sysGetCurrentTime(&sec, &nsec);
     time_t t = (time_t)sec;
     struct tm tm;
     gmtime_r(&t, &tm);
-    snprintf(path, len, APP_DIR "/report-%04d%02d%02d-%02d%02d%02d.txt", tm.tm_year + 1900, tm.tm_mon + 1,
-             tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+    char when[32];
+    snprintf(when, sizeof when, "%04d-%02d-%02d %02d:%02d UTC", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+             tm.tm_hour, tm.tm_min);
+    snprintf(path, len, APP_DIR "/%sreport-%04d%02d%02d-%02d%02d%02d.txt", d->demo ? "demo-" : "", tm.tm_year + 1900,
+             tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
     rlen = 0;
-    out("HDD/SSD Health report, %04d-%02d-%02d %02d:%02d:%02d UTC\n\n", tm.tm_year + 1900, tm.tm_mon + 1,
-        tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+    out("HDD/SSD Health %s report, %04d-%02d-%02d %02d:%02d:%02d UTC%s\n\n", APP_VERSION, tm.tm_year + 1900, tm.tm_mon + 1,
+        tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, d->demo ? " (DEMO MODE: sectors from files, not from the drive)" : "");
+    out("console: firmware %s, Cell %d C, RSX %d C (383 rc 0x%08x)\n", d->firmware[0] ? d->firmware : "unknown",
+        d->cpu_temp, d->rsx_temp, (unsigned)d->temps_rc);
     out("609 device info: rc=0x%08x sectors=%llu sector size=%u\n", (unsigned)d->info_rc,
         (unsigned long long)d->info_sectors, d->info_sector_size);
     out("600 open:        rc=0x%08x\n", (unsigned)d->open_rc);
@@ -355,25 +611,51 @@ int report_write(const drive_state *d, char *path, int len)
         out("SMART supported %s, enabled %s, self-test %s\n", yesno(i->smart_supported), yesno(i->smart_enabled),
             yesno(i->selftest_supported));
         out("IDENTIFY checksum %d, word order %s\n", i->checksum, i->swapped ? "swapped" : "raw");
+        out("vendor table: %s\n", vendor_get(d->vendor)->name);
         out("\nSMART READ DATA rc=0x%08x, THRESHOLDS rc=0x%08x, SELF-TEST LOG rc=0x%08x%s\n", (unsigned)d->smart_rc,
             (unsigned)d->thresh_rc, (unsigned)d->stlog_rc, d->smart_frozen ? " (froze before: skipped)" : "");
     }
     if (d->have_smart) {
         const smart_data *s = &d->s;
         out("checksums: data %d, thresholds %d\n\n", s->checksum, s->thresh_checksum);
-        out("  ID  attribute               value worst thresh  raw\n");
+        out("  ID  attribute                   value worst thresh  raw                          since last report\n");
         for (int k = 0; k < s->count; k++) {
             const smart_attr *a = &s->a[k];
-            out("  %3u %-22s  %3u   %3u   %3u    %llu (0x%012llx)\n", a->id, smart_attr_name(a->id), a->value,
-                a->worst, a->thresh, (unsigned long long)a->raw, (unsigned long long)a->raw);
+            long long dl = 0;
+            char ds[24] = "";
+            if (d->have_prev && smart_delta(s, &d->prev, a->id, &dl) && dl) snprintf(ds, sizeof ds, "%+lld", dl);
+            out("  %3u %-26s  %3u   %3u   %3u    %-14llu (0x%012llx) %s\n", a->id, vendor_attr_name(d->vendor, a->id),
+                a->value, a->worst, a->thresh, (unsigned long long)a->raw, (unsigned long long)a->raw, ds);
         }
-        out("\ntemperature %d C\n", s->temperature);
-        out("self-test now: %s, %d%% left (byte 363 = 0x%02x)\n", selftest_status_text(s->selftest),
-            (s->selftest & 0xF) * 10, s->selftest);
+        char ht[48], dtext[512];
+        hours_text(d->sum.hours, ht, sizeof ht);
+        out("\npower-on %s, power cycles %d\n", ht, d->sum.cycles);
+        if (d->sum.life_left >= 0) out("life left %d%% (attribute %d)\n", d->sum.life_left, d->sum.life_id);
+        else out("life left: no known attribute for this vendor\n");
+        if (d->sum.writes_id && d->sum.tb_written >= 0)
+            out("host writes %.2f TB (attribute %d raw %llu, %s)\n", d->sum.tb_written, d->sum.writes_id,
+                (unsigned long long)d->sum.writes_raw, writes_unit_text(d->sum.writes_unit));
+        else if (d->sum.writes_id)
+            out("host writes: attribute %d raw %llu (%s)\n", d->sum.writes_id, (unsigned long long)d->sum.writes_raw,
+                writes_unit_text(d->sum.writes_unit));
+        else out("host writes: not reported\n");
+        if (d->have_prev) {
+            int changed = delta_text(s, &d->prev, dtext, sizeof dtext);
+            out("since %s: %s\n", d->prev_when, changed ? dtext : "no change");
+        } else out("since last report: no previous read on this console\n");
+        if (d->speed_done)
+            out("speed test: write %.1f MB/s, read %.1f MB/s (%.0f MB file in " APP_DIR ", %.2f s + %.2f s)\n",
+                d->speed_mb / (d->speed_wsec > 0 ? d->speed_wsec : 1), d->speed_mb / (d->speed_rsec > 0 ? d->speed_rsec : 1),
+                d->speed_mb, d->speed_wsec, d->speed_rsec);
+        else if (d->speed_rc) out("speed test: failed, rc 0x%08x\n", (unsigned)d->speed_rc);
+        out("\ntemperature %d C (warning at %d)\n", s->temperature, d->sum.temp_limit);
+        if ((s->selftest >> 4) == 0xF)
+            out("self-test now: running, %d%% done (byte 363 = 0x%02x)\n", 100 - (s->selftest & 0xF) * 10, s->selftest);
+        else out("self-test now: %s (byte 363 = 0x%02x)\n", selftest_status_text(s->selftest), s->selftest);
         out("short self-test about %u min; off-line capabilities 0x%02x\n", s->short_minutes, s->offline_caps);
         char why[256];
-        int h = smart_health(s, d->have_stlog ? &d->log : NULL, why, sizeof why);
-        out("health: %s (%s)\n", h == HEALTH_OK ? "OK" : h == HEALTH_WARN ? "WARN" : "FAIL", why);
+        int h = smart_health(s, d->have_stlog ? &d->log : NULL, d->sum.temp_limit, why, sizeof why);
+        out("health: %s (%s)\n", health_text(h), why);
     }
     if (d->have_stlog) {
         out("\nself-test log (newest first), checksum %d:\n", d->log.checksum);
@@ -385,11 +667,55 @@ int report_write(const drive_state *d, char *path, int len)
         if (!d->log.count) out("  empty\n");
     }
     if (d->selftest_rc) out("\nself-test start rc=0x%08x\n", (unsigned)d->selftest_rc);
+    {
+        char body[1024];
+        compat_body(d, body, sizeof body);
+        out("\n--- compatibility report (paste into a GitHub issue) ---\n%s", body);
+    }
     write_file(path, rep, rlen, 0);
+    if (d->demo) return rlen;                /* demo sectors never replace the real dumps */
     if (d->have_identify) write_file(APP_DIR "/identify.bin", d->identify, 512, 0);
-    if (d->have_smart) write_file(APP_DIR "/smart.bin", d->smart, 512, 0);
+    if (d->have_smart) {
+        write_file(APP_DIR "/smart.bin", d->smart, 512, 0);
+        char tag[96];
+        snprintf(tag, sizeof tag, "%s | %s", when, d->id.model);
+        write_file(APP_DIR "/smart.when", tag, strlen(tag), 0);
+    }
     if (d->have_thresh) write_file(APP_DIR "/thresh.bin", d->thresh, 512, 0);
     if (d->have_stlog) write_file(APP_DIR "/selftest.bin", d->stlog, 512, 0);
     write_file(APP_DIR "/devinfo.bin", d->info_raw, sizeof d->info_raw, 0);
     return rlen;
+}
+
+/* Copies the last report to the first USB stick found, into hdd_ssd_health/. */
+int report_copy_usb(const char *report_path, char *dst, int n)
+{
+    const char *base = strrchr(report_path, '/');
+    base = base ? base + 1 : report_path;
+    for (int u = 0; u < 8; u++) {
+        char dir[48];
+        sysFSStat st;
+        snprintf(dir, sizeof dir, "/dev_usb%03d", u);
+        if (sysLv2FsStat(dir, &st)) continue;
+        snprintf(dir, sizeof dir, "/dev_usb%03d/hdd_ssd_health", u);
+        sysLv2FsMkdir(dir, 0777);
+        snprintf(dst, n, "%s/%s", dir, base);
+        s32 fd;
+        u64 w = 0;
+        if (sysLv2FsOpen(dst, SYS_O_WRONLY | SYS_O_CREAT | SYS_O_TRUNC, &fd, 0666, NULL, 0)) return -2;
+        sysLv2FsWrite(fd, rep, rlen, &w);
+        sysLv2FsFsync(fd);
+        sysLv2FsClose(fd);
+        /* the freeze journal too: it tells at which step a console froze */
+        static char jtext[32768];
+        int jn = read_file(JOURNAL, jtext, sizeof jtext);
+        if (jn > 0) {
+            char jdst[64];
+            snprintf(jdst, sizeof jdst, "%s/journal.txt", dir);
+            write_file(jdst, jtext, (u64)jn, 0);
+        }
+        return w == (u64)rlen ? 0 : -3;
+    }
+    dst[0] = 0;
+    return -1;
 }

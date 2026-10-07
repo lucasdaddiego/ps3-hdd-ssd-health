@@ -53,3 +53,7 @@ contains compiled code and data from the projects below.
    repository and is outside its MIT grant: the script reads it at run time
    from ~/.local/share/ps3dev/keys.toml (or $PS3DEV_KEYS), which is never
    committed.
+
+7. QR Code generator library (source/qrcodegen.c, source/qrcodegen.h),
+   Copyright (c) Project Nayuki, https://www.nayuki.io/page/qr-code-generator-library,
+   MIT License (the same text as item 1, with this copyright line). Unmodified.

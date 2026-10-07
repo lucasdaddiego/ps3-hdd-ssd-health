@@ -25,9 +25,9 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Decoder test (source/smart.c on the host)
+      - name: Host test (SMART decoders, vendor tables, issue link, QR)
         run: |
-          cc -std=c99 -Wall -Wextra -Werror -o test_smart test/test_smart.c source/smart.c
+          cc -std=c99 -Wall -Wextra -Werror -o test_smart test/test_smart.c source/smart.c source/vendor.c source/compat.c source/qrcodegen.c
           ./test_smart
 
       - name: Python scripts compile, verify_self.py --help

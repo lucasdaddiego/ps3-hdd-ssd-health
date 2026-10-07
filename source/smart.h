@@ -48,6 +48,19 @@ typedef struct {
 
 enum { HEALTH_OK, HEALTH_WARN, HEALTH_FAIL };
 
+/* Derived numbers for the summary page. -1 / negative = not available. */
+typedef struct {
+    int hours, cycles;           /* attributes 9 and 12, raw low 32 bits */
+    int life_left, life_id;      /* % left = normalized value of the vendor's life attribute */
+    uint64_t writes_raw;
+    int writes_id, writes_unit;  /* UNIT_* from vendor.h */
+    double tb_written;           /* only when the unit is known */
+    int temp_limit;              /* 55 C for an HDD, 65 C for an SSD */
+} smart_summary;
+
+#define TEMP_LIMIT_HDD 55
+#define TEMP_LIMIT_SSD 65
+
 int ata_identify_order(const uint8_t *buf, const char *model_hint);
 int ata_parse_identify(const uint8_t *buf, const char *model_hint, ata_identity *out);
 void ata_unswap(uint8_t *buf, int n);
@@ -57,7 +70,10 @@ const char *smart_attr_name(uint8_t id);
 int smart_counter(uint8_t id);
 const char *selftest_status_text(uint8_t status_byte);
 const char *selftest_type_text(uint8_t type);
-int smart_health(const smart_data *s, const selftest_log *log, char *why, int whylen);
+int smart_health(const smart_data *s, const selftest_log *log, int temp_limit, char *why, int whylen);
+const smart_attr *smart_find(const smart_data *s, uint8_t id);
+void smart_summarize(const smart_data *s, int is_ssd, int vendor, smart_summary *o);
+int smart_delta(const smart_data *now, const smart_data *prev, uint8_t id, long long *delta);
 int sector_checksum(const uint8_t *buf);
 int model_match(const char *a, const char *b);
 void trim_copy(char *dst, const char *src, int n);

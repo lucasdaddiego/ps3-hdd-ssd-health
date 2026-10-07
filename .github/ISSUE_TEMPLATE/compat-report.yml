@@ -1,0 +1,51 @@
+name: Compatibility report
+description: Tell what the app did on your console. The QR code on the app's share page opens this form prefilled.
+title: "Compat: <drive> on <firmware>"
+labels: ["compat"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks. Each report goes into the "Tested on" table in the README.
+        Do not paste `identify.bin`: it holds your drive's full serial number.
+  - type: input
+    id: console
+    attributes:
+      label: Console model and HEN/CFW
+      description: The model line on the back of the console, and the HEN or CFW version.
+      placeholder: "CECH-4004A, PS3HEN 3.6.0"
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware and app version
+      placeholder: "4.93 (Europe), app 1.1.0"
+    validations:
+      required: true
+  - type: input
+    id: drive
+    attributes:
+      label: Drive
+      description: From the main screen or the report. No serial number.
+      placeholder: "Samsung SSD 870 EVO 1TB, fw SVT02B6Q, 1000 GB, SSD, SATA 1 (max 3)"
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Result
+      description: What each step did. "froze" means a forced power-off, and at which step.
+      placeholder: "609 rc 0x0, 600 rc 0x0, IDENTIFY ok, SMART ok, log ok, last self-test completed, read 135 MB/s"
+    validations:
+      required: true
+  - type: textarea
+    id: health
+    attributes:
+      label: Health line and counters
+      description: Optional. The health line, hours, temperature and the error counters.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: A photo of the TV, what you expected, a wrong attribute name.
