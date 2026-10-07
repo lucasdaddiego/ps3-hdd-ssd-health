@@ -124,6 +124,11 @@ int ata_parse_identify(const uint8_t *buf, const char *model_hint, ata_identity 
         if (w77 != 0xFFFF) o->sata_cur_gen = (w77 >> 1) & 7;
     }
     o->rotation = W(217);
+    o->hpa = VALID(w83) && (W(82) & (1 << 10));
+    o->hpa_enabled = VALID(w87) && (W(85) & (1 << 10));
+    unsigned w119 = W(119);
+    o->amac = VALID(w119) && (w119 & (1 << 8));
+    o->gpl = VALID(w83) && (W(84) & (1 << 5));
     o->checksum = (W(255) & 0xff) == 0xA5 ? sector_checksum(buf) == 0 : -1;
 #undef W
     return o->model[0] ? 0 : -1;
@@ -360,4 +365,117 @@ int smart_delta(const smart_data *now, const smart_data *prev, uint8_t id, long 
     if (!a || !b) return 0;
     *delta = (long long)a->raw - (long long)b->raw;
     return 1;
+}
+
+/* Log 01h: byte 0 version, byte 1 index of the newest of 5 error data
+ * structures (90 bytes each from byte 2: five 12-byte command blocks, then a
+ * 30-byte error block whose byte 1 is the error register and byte 8 the status
+ * register), bytes 452-453 the device error count, byte 511 the checksum. */
+int errorlog_parse(const uint8_t *buf, error_log *o)
+{
+    memset(o, 0, sizeof *o);
+    o->version = buf[0];
+    o->index = buf[1];
+    o->error_count = buf[452] | buf[453] << 8;
+    o->checksum = sector_checksum(buf) == 0;
+    if (o->index >= 1 && o->index <= 5) {
+        const uint8_t *e = buf + 2 + (o->index - 1) * 90;
+        o->last_command = e[4 * 12 + 7];     /* the fifth command block: the command that failed */
+        o->last_error = e[60 + 1];
+        o->last_status = e[60 + 8];
+    }
+    return o->version == 1 ? 0 : -1;
+}
+
+/* ---- GPL logs ------------------------------------------------------------- */
+
+static long long qword(const uint8_t *b, int off, int *valid)
+{
+    uint64_t q = 0;
+    for (int i = 7; i >= 0; i--) q = q << 8 | b[off + i];
+    *valid = (q >> 63) && (q >> 62 & 1);
+    return (long long)(q & 0xFFFFFFFFFFFFull);
+}
+
+static long long stat(const uint8_t *b, int off)
+{
+    int valid;
+    long long v = qword(b, off, &valid);
+    return valid ? v : -1;
+}
+
+static int stat_temp(const uint8_t *b, int off)
+{
+    int valid;
+    long long v = qword(b, off, &valid);
+    return valid ? (int)(int8_t)(v & 0xff) : -999;
+}
+
+/* Page 0: byte 8 = number of entries, bytes 9.. = the supported page numbers. */
+int devstat_pages(const uint8_t *page0, uint8_t *pages, int max)
+{
+    int n = page0[8];
+    if (n > max) n = max;
+    for (int i = 0; i < n; i++) pages[i] = page0[9 + i];
+    return n;
+}
+
+static int page_is(const uint8_t *buf, int page) { return buf[2] == page && buf[0] >= 1; }
+
+void devstat_general(const uint8_t *buf, dev_stats *o)
+{
+    if (!page_is(buf, 1)) return;
+    o->have_general = 1;
+    o->resets = stat(buf, 8);
+    o->power_on_hours = stat(buf, 16);
+    o->sectors_written = stat(buf, 24);
+    o->write_cmds = stat(buf, 32);
+    o->sectors_read = stat(buf, 40);
+    o->read_cmds = stat(buf, 48);
+}
+
+void devstat_temperature(const uint8_t *buf, dev_stats *o)
+{
+    if (!page_is(buf, 5)) return;
+    o->have_temp = 1;
+    o->temp_now = stat_temp(buf, 8);
+    o->temp_max = stat_temp(buf, 32);
+    o->temp_min = stat_temp(buf, 40);
+}
+
+void devstat_ssd(const uint8_t *buf, dev_stats *o)
+{
+    if (!page_is(buf, 7)) return;
+    o->have_ssd = 1;
+    long long v = stat(buf, 8);
+    o->endurance_used = v < 0 ? -1 : (int)(v & 0xff);
+}
+
+/* Log 11h: from byte 4, counters of (16-bit id, value of 2 << ((id >> 12) & 7)
+ * bytes... the size code in bits 14:12: 1 = 16, 2 = 32, 3 = 64 bits); id 0 ends. */
+int phy_parse(const uint8_t *buf, phy_counters *o)
+{
+    memset(o, 0, sizeof *o);
+    o->icrc = o->crc_h2d = o->rerr_data = o->phy_nrdy = o->comreset = o->nonfis_errors = -1;
+    int off = 4;
+    while (off + 2 <= 510) {
+        unsigned id = buf[off] | buf[off + 1] << 8;
+        if ((id & 0x0FFF) == 0) break;       /* identifier 0 ends the list (the Dahua writes it with size bits set) */
+        int size = 2 << (((id >> 12) & 7) - 1);
+        if (size < 2 || size > 8 || off + 2 + size > 510) break;
+        long long v = 0;
+        for (int i = size - 1; i >= 0; i--) v = v << 8 | buf[off + 2 + i];
+        switch (id & 0x0FFF) {
+        case 0x001: o->icrc = v; break;              /* command failed, ICRC error */
+        case 0x002: o->rerr_data = v; break;         /* R_ERR response for data FIS */
+        case 0x005: o->nonfis_errors = v; break;     /* R_ERR response for non-data FIS */
+        case 0x009: o->phy_nrdy = v; break;          /* PhyRdy to PhyNRdy transitions */
+        case 0x00A: o->comreset = v; break;          /* signature D2H FISes: resets */
+        case 0x00B: o->crc_h2d = v; break;           /* CRC errors within H2D FIS */
+        default: break;
+        }
+        o->count++;
+        off += 2 + size;
+    }
+    return o->count ? 0 : -1;
 }

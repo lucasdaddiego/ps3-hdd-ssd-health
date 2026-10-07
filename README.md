@@ -56,6 +56,7 @@ and the result, and it goes into this table.
 
 | Model | Firmware | Drive | Version | Result | Source |
 |---|---|---|---|---|---|
+| Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 1.2.0 | all of 1.1.0, plus the error log and the two general purpose logs (device statistics, Phy counters) | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 1.1.0 | IDENTIFY, SMART reads, the short self-test, the speed test (write 25, read 63 MB/s), USB copy, QR scan and demo mode work | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 1.0.1 | IDENTIFY, SMART reads and the short self-test work | author |
 
@@ -70,7 +71,7 @@ ends with the same text.
 
 ## Install
 
-1. Download `HDD-SSD-Health-v1.1.0.pkg` from [Releases](../../releases).
+1. Download `HDD-SSD-Health-v1.2.0.pkg` from [Releases](../../releases).
 2. Copy it to `/dev_hdd0/packages/` (FTP), or to the root of a FAT32 USB stick.
 3. With HEN on, install it: Game → Package Manager → Install Package Files (Standard
    or USB).
@@ -109,8 +110,8 @@ ends with the same text.
 Files on the console, in `/dev_hdd0/tmp/hdd_ssd_health/`:
 - `report-YYYYMMDD-HHMMSS.txt` — one report per read (UTC time). The serial
   number is masked (`AB******78`). The report ends with the compatibility text.
-- `identify.bin`, `smart.bin`, `thresh.bin`, `selftest.bin`, `devinfo.bin` — the
-  raw sectors of the last read. `identify.bin` holds the full serial number and
+- `identify.bin`, `smart.bin`, `thresh.bin`, `selftest.bin`, `errlog.bin`,
+  `devstat.bin`, `phy.bin`, `devinfo.bin` — the raw sectors of the last read. `identify.bin` holds the full serial number and
   the WWN: do not attach it to a public issue.
 - `smart.when` — the time and the model of the last `smart.bin`. The next start
   reads both files and shows the change per attribute ("since last" column, and
@@ -129,6 +130,24 @@ The app sends only these ATA commands:
 - SMART READ DATA, READ THRESHOLDS and READ LOG 06h (the self-test log);
 - SMART EXECUTE OFF-LINE IMMEDIATE, subcommand 01h (short self-test in off-line
   mode), and only when you press TRIANGLE twice.
+
+Since 1.2, two more read-only commands, each behind a first-run prompt (the
+app shows what the command does and asks for CROSS before it runs the first
+time; CIRCLE skips it, and the skip is kept until SQUARE twice clears the
+journal):
+- SMART READ LOG 01h, the summary error log: the drive's count of command
+  errors and the newest one.
+- READ LOG EXT 2Fh, on a drive with General Purpose Logging: the device
+  statistics log (04h, pages 1, 5 and 7: exact sectors written, lifetime
+  temperature extremes, the percentage-used endurance indicator) and the SATA
+  Phy event counters log (11h: CRC errors and link resets, which explain
+  attribute 199). Up to five 512-byte reads.
+
+A note on what the path cannot do: the system call returns the data buffer
+and a status word, not the drive's registers. A non-data command whose answer
+is in the registers, like READ NATIVE MAX ADDRESS EXT, comes back empty (tested
+on the author's console: accepted, no registers). So the app cannot tell
+whether a Host Protected Area is set.
 
 It never sends a write, a standby, a captive self-test or a SMART enable/disable.
 The short self-test does not change data: the drive checks itself and keeps
@@ -153,9 +172,10 @@ check its file system at boot if it offers to, and never choose "Restore PS3
 System".
 
 The app reads only the last 32 KB of the journal, so a long session cannot hide
-the newest entry. To try a skipped call again (for example after a firmware
+the newest entry. A `skip` line records a command you declined at its first-run
+prompt. To try a skipped or frozen call again (for example after a firmware
 change), press SQUARE twice on any screen: the journal is emptied, and the next
-start runs every call again.
+start asks or runs every call again.
 
 ## SSD in a PS3: no TRIM
 
@@ -170,8 +190,9 @@ console: on a PC, make the drive smaller with a Host Protected Area
 (`hdparm -N p<sectors> /dev/sdX` on Linux, or the vendor's tool), leaving 10 to
 20 percent unused. The PS3 formats only the visible part, and the controller
 uses the rest as spare area. The app cannot set this: HPA commands are writes,
-and the drive holds the running system. A read-only check whether an HPA is
-set (READ NATIVE MAX ADDRESS EXT) is planned for 1.2.
+and the drive holds the running system. It cannot see it either: the native
+size comes back in the drive's registers, which the PS3's system call does not
+return (see Safety).
 
 The app also cannot send TRIM itself: TRIM takes a list of free sectors, and
 the PS3 file system is encrypted per sector by LV1, so no app can know which

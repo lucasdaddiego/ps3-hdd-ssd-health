@@ -33,13 +33,20 @@ shows up.
 
 ## Results
 
-| Drive | App version | smartctl version | Result | Date |
+| Drive | App version | Reference | Result | Date |
 |---|---|---|---|---|
-| Dahua V800 1 TB (test console) | 1.1.0 | pending | pending: the drive is in the console | |
+| Dahua V800 1 TB (test console) | 1.2.0 rc2 | the drive's own device statistics log (GPL 04h, read by the app) | host writes: attribute 241 = 72570 x 32 MiB = 2.435 TB, device statistics = 4757916160 sectors = 2.436 TB (0.04 % apart); power-on hours 931 in both | 2026-10-07 |
+| Dahua V800 1 TB (test console) | 1.1.0 | smartctl | pending: the drive is in the console | |
 
-Open point for the Dahua: the unit of attribute 241 (host writes). The app
-uses 32 MiB, the Maxio layout's unit, because it is the only unit that agrees
-with the drive's own erase counters (2026-10-07 dump: average erase count 6 on
-1 TB, 233 = 146185 and 241 = 72132 give 4.9 TB of NAND writes and 2.4 TB of host
-writes in 921 h; GiB would mean 72 TB, LBAs 37 MB). `smartctl -x` or the vendor
-tool should confirm it.
+The unit of attribute 241 on the Maxio layout is settled: the device statistics
+log, which counts sectors exactly, agrees with 241 x 32 MiB within 0.04 %. The
+erase counters pointed the same way (average erase count 6 on 1 TB, 233 =
+146185 and 241 = 72132 gave 4.9 TB of NAND and 2.4 TB of host writes in 921 h;
+GiB would have meant 72 TB, LBAs 37 MB).
+
+Two things the same log showed on this drive:
+- The percentage-used endurance indicator (page 7) reads 100 on a drive whose
+  attribute 202 says 100 % life left. The firmware stores the remaining
+  percent. The app therefore shows the indicator as a number, not as a verdict.
+- The Phy counters log lists two counters (ICRC errors 0, resets 1) and ends
+  with a zero identifier that carries size bits, which the decoder accepts.

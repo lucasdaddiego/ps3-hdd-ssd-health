@@ -56,7 +56,6 @@ static s32 get_temperature(u32 id, u32 *t) { lv2syscall2(383, id, (u64)t); retur
 
 /* ---- journal ------------------------------------------------------------ */
 
-enum { J_NONE, J_PENDING, J_OK, J_BAD, J_FROZEN };
 static struct { char name[24]; int state; } jst[32];
 static int jn, jloaded;
 
@@ -133,6 +132,7 @@ static void journal_load(void)
         if (!strcmp(verb, "start")) *s = J_PENDING;
         else if (!strcmp(verb, "done") && *s != J_FROZEN) *s = ok ? J_OK : J_BAD;
         else if (!strcmp(verb, "froze")) *s = J_FROZEN;
+        else if (!strcmp(verb, "skip")) *s = J_SKIPPED;
     }
     for (int i = 0; i < jn; i++)
         if (jst[i].state == J_PENDING) {
@@ -144,6 +144,7 @@ static void journal_load(void)
         text[0] = 0;
         for (int i = 0; i < jn; i++) {
             if (jst[i].state == J_FROZEN) snprintf(line, sizeof line, "froze %s\n", jst[i].name);
+            else if (jst[i].state == J_SKIPPED) snprintf(line, sizeof line, "skip %s\n", jst[i].name);
             else snprintf(line, sizeof line, "done %s rc=0x00000000 ok=%d\n", jst[i].name, jst[i].state == J_OK);
             strcat(text, line);
         }
@@ -158,10 +159,23 @@ void journal_clear(void)
     jn = 0;
 }
 
+int journal_state(const char *name)
+{
+    if (!jloaded) journal_load();
+    return *jstate(name);
+}
+
+/* The first-run prompt was declined: remembered until the journal is cleared. */
+void journal_skip(const char *name)
+{
+    jappend("skip %s\n", name, 0, 0);
+    *jstate(name) = J_SKIPPED;
+}
+
 static int jstart(const char *name)
 {
     int *s = jstate(name);
-    if (*s == J_FROZEN) return 0;
+    if (*s == J_FROZEN || *s == J_SKIPPED) return 0;
     jappend("start %s\n", name, 0, 0);
     *s = J_PENDING;
     return 1;
@@ -210,6 +224,30 @@ static s32 ata_command(drive_state *d, uint16_t features, uint16_t count, uint16
     return storage_execute_device_command(d->handle, LV1_ATA, &blk, 32, buf, len, &status);
 }
 
+/* READ LOG EXT (2Fh), one 512-byte page of a general purpose log. 48-bit: the
+ * page number's low byte goes in LBA 15:8, its high byte in LBA 47:40 (the
+ * HOB byte of lba_high, if the block's 16-bit fields map current|previous). */
+static s32 read_log_ext(drive_state *d, uint8_t log, uint16_t page)
+{
+    ata_block blk;
+    memset(&blk, 0, sizeof blk);
+    blk.sector_count = 1;
+    blk.lba_low = log;
+    blk.lba_mid = page & 0xff;
+    blk.lba_high = (uint16_t)((page >> 8) << 8);
+    blk.device = 0x40;
+    blk.command = 0x2F;
+    blk.is_ext = 1;
+    blk.proto = PROTO_PIO_IN;
+    blk.in_out = DIR_READ;
+    blk.size = blk.arglen = 512;
+    u64 status = 0;
+    memset(buf, 0, sizeof buf);
+    s32 rc = storage_execute_device_command(d->handle, LV1_ATA, &blk, 32, buf, 512, &status);
+    if (rc == 0 && d->id.swapped) ata_unswap(buf, 512);
+    return rc;
+}
+
 /* A valid IDENTIFY: data, a printable model, and a good checksum when the drive signs it. */
 static int identify_ok(drive_state *d)
 {
@@ -252,7 +290,7 @@ void drive_probe(drive_state *d, void (*progress)(const char *msg))
     d->identify_frozen = *jstate("identify") == J_FROZEN;
     d->smart_frozen = *jstate("smart_data") == J_FROZEN;
     d->selftest_frozen = *jstate("selftest_start") == J_FROZEN;
-    d->speed_frozen = *jstate("read_speed") == J_FROZEN;
+    d->speed_frozen = *jstate("speed_file") == J_FROZEN;
 
     progress("Reading the drive size (syscall 609)");
     if (jstart("devinfo")) { do_devinfo(d); jdone("devinfo", d->info_rc, d->info_rc == 0); }
@@ -315,12 +353,16 @@ int drive_demo_load(drive_state *d)
     if (read_file(DEMO_DIR "/smart.bin", d->smart, 512) != 512) return -1;
     d->have_thresh = read_file(DEMO_DIR "/thresh.bin", d->thresh, 512) == 512;
     d->have_stlog = read_file(DEMO_DIR "/selftest.bin", d->stlog, 512) == 512;
+    d->have_errlog = read_file(DEMO_DIR "/errlog.bin", d->errlog, 512) == 512;
     if (ata_parse_identify(d->identify, NULL, &d->id)) return -1;
     d->have_identify = d->have_smart = d->ata_ok = 1;
     d->vendor = vendor_detect(d->id.model);
     snprintf(d->identify_note, sizeof d->identify_note, "DEMO: sectors from %s", DEMO_DIR);
     smart_parse(d->smart, d->have_thresh ? d->thresh : NULL, &d->s);
     if (d->have_stlog) selftest_parse(d->stlog, &d->log);
+    if (d->have_errlog) errorlog_parse(d->errlog, &d->elog);
+    if (read_file(DEMO_DIR "/devstat.bin", d->devstat, 512) == 512) { d->have_devstat = 1; devstat_general(d->devstat, &d->ds); }
+    if (read_file(DEMO_DIR "/phy.bin", d->phylog, 512) == 512) d->have_phy = phy_parse(d->phylog, &d->phy) == 0;
     smart_summarize(&d->s, d->id.rotation == 1, d->vendor, &d->sum);
     return 0;
 }
@@ -405,6 +447,48 @@ static int smart_read(drive_state *d, const char *name, uint8_t features, uint16
         *have = 1;
     }
     return rc;
+}
+
+/* SMART READ LOG 01h, the summary error log. Same path as the self-test log. */
+int drive_read_error_log(drive_state *d)
+{
+    if (!d->ata_ok || d->demo) return -1;
+    d->errlog_rc = smart_read(d, "error_log", 0xD5, 0x01, d->errlog, &d->have_errlog);
+    if (d->have_errlog) errorlog_parse(d->errlog, &d->elog);
+    return d->errlog_rc;
+}
+
+/* The general purpose logs, behind the first-run prompt. Device statistics:
+ * page 0 lists the pages, then 1 (general), 5 (temperature), 7 (SSD) when
+ * listed; page 1 is kept as devstat.bin. Then the Phy counters log 11h. */
+int drive_read_gpl(drive_state *d)
+{
+    if (!d->ata_ok || d->demo || !d->id.gpl) return -1;
+    memset(&d->ds, 0, sizeof d->ds);
+    if (jstart("gpl_devstat")) {
+        uint8_t pages[32];
+        int n = 0;
+        d->gpl_rc = read_log_ext(d, 0x04, 0);
+        if (d->gpl_rc == 0) n = devstat_pages(buf, pages, 32);
+        for (int i = 0; i < n && d->gpl_rc == 0; i++) {
+            if (pages[i] != 1 && pages[i] != 5 && pages[i] != 7) continue;
+            d->gpl_rc = read_log_ext(d, 0x04, pages[i]);
+            if (d->gpl_rc) break;
+            if (pages[i] == 1) { memcpy(d->devstat, buf, 512); d->have_devstat = 1; devstat_general(buf, &d->ds); }
+            else if (pages[i] == 5) devstat_temperature(buf, &d->ds);
+            else devstat_ssd(buf, &d->ds);
+        }
+        jdone("gpl_devstat", d->gpl_rc, d->gpl_rc == 0 && d->have_devstat);
+    }
+    if (jstart("gpl_phy")) {
+        d->phy_rc = read_log_ext(d, 0x11, 0);
+        if (d->phy_rc == 0) {
+            memcpy(d->phylog, buf, 512);
+            d->have_phy = phy_parse(buf, &d->phy) == 0;
+        }
+        jdone("gpl_phy", d->phy_rc, d->have_phy);
+    }
+    return d->gpl_rc ? d->gpl_rc : d->phy_rc;
 }
 
 /* full = 0: SMART data only (self-test progress); 1: also thresholds and the self-test log. */
@@ -545,6 +629,11 @@ static int compat_field(const drive_state *d, const char *id, char *out, int n)
                     d->speed_mb / (d->speed_rsec > 0 ? d->speed_rsec : 1));
         else if (d->speed_frozen) j = app(out, n, j, ", speed test froze");
         else if (d->speed_rc) j = app(out, n, j, ", speed test rc 0x%x", (unsigned)d->speed_rc);
+        if (d->have_errlog) j = app(out, n, j, ", error log %d", d->elog.error_count);
+        else if (d->errlog_rc) j = app(out, n, j, ", error log rc 0x%x", (unsigned)d->errlog_rc);
+        if (d->have_devstat || d->have_phy) j = app(out, n, j, ", GPL logs %s/%s", d->have_devstat ? "stats ok" : "stats no",
+                                                     d->have_phy ? "phy ok" : "phy no");
+        else if (d->gpl_rc) j = app(out, n, j, ", GPL rc 0x%x", (unsigned)d->gpl_rc);
     } else if (!strcmp(id, "health")) {
         if (!d->have_smart) return app(out, n, j, "no SMART data");
         char why[256], h[48];
@@ -658,6 +747,30 @@ int report_write(drive_state *d, char *path, int len)
         out("health: %s (%s)\n", health_text(h), why);
     }
     if (d->have_stlog) {
+        if (d->have_errlog)
+            out("ATA error log (01h): %d errors, version %d, index %d, checksum %d%s\n", d->elog.error_count, d->elog.version,
+                d->elog.index, d->elog.checksum, d->elog.index ? "" : ", no entry");
+        else if (d->errlog_rc) out("ATA error log (01h): rc 0x%08x\n", (unsigned)d->errlog_rc);
+        if (d->have_errlog && d->elog.index)
+            out("  newest error: command 0x%02x, error register 0x%02x, status 0x%02x\n", d->elog.last_command,
+                d->elog.last_error, d->elog.last_status);
+        if (d->ds.have_general) {
+            out("device statistics (GPL 04h page 1): power-on hours %lld, resets %lld, sectors written %lld (%.2f TB), "
+                "sectors read %lld, write commands %lld, read commands %lld\n", d->ds.power_on_hours, d->ds.resets,
+                d->ds.sectors_written, d->ds.sectors_written >= 0 ? (double)d->ds.sectors_written * d->id.logical_size / 1e12 : -1.0,
+                d->ds.sectors_read, d->ds.write_cmds, d->ds.read_cmds);
+            if (d->ds.have_temp) out("  temperature (page 5): now %d, lifetime max %d, min %d (-999 = not reported)\n",
+                                      d->ds.temp_now, d->ds.temp_max, d->ds.temp_min);
+            if (d->ds.have_ssd) out("  SSD (page 7): percentage used endurance indicator %d (some firmware reports the remaining percent)\n",
+                                    d->ds.endurance_used);
+        } else if (d->gpl_rc) out("device statistics (GPL 04h): rc 0x%08x\n", (unsigned)d->gpl_rc);
+        if (d->have_phy)
+            out("SATA Phy counters (GPL 11h, %d counters): ICRC %lld, CRC in H2D FIS %lld, R_ERR data %lld, "
+                "R_ERR non-data %lld, PhyRdy drops %lld, resets %lld (-1 = not reported)\n", d->phy.count, d->phy.icrc,
+                d->phy.crc_h2d, d->phy.rerr_data, d->phy.nonfis_errors, d->phy.phy_nrdy, d->phy.comreset);
+        else if (d->phy_rc) out("SATA Phy counters (GPL 11h): rc 0x%08x\n", (unsigned)d->phy_rc);
+        out("GPL supported %s, HPA feature %s%s, AMAC %s\n", yesno(d->id.gpl), yesno(d->id.hpa),
+            d->id.hpa_enabled ? " (enabled)" : "", yesno(d->id.amac));
         out("\nself-test log (newest first), checksum %d:\n", d->log.checksum);
         for (int k = 0; k < d->log.count; k++) {
             const selftest_entry *e = &d->log.e[k];
@@ -683,6 +796,9 @@ int report_write(drive_state *d, char *path, int len)
     }
     if (d->have_thresh) write_file(APP_DIR "/thresh.bin", d->thresh, 512, 0);
     if (d->have_stlog) write_file(APP_DIR "/selftest.bin", d->stlog, 512, 0);
+    if (d->have_errlog) write_file(APP_DIR "/errlog.bin", d->errlog, 512, 0);
+    if (d->have_devstat) write_file(APP_DIR "/devstat.bin", d->devstat, 512, 0);
+    if (d->have_phy) write_file(APP_DIR "/phy.bin", d->phylog, 512, 0);
     write_file(APP_DIR "/devinfo.bin", d->info_raw, sizeof d->info_raw, 0);
     return rlen;
 }

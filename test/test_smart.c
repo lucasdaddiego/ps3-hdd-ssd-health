@@ -211,6 +211,58 @@ int main(void)
     CHECK(!smart_delta(&now, &before, 12, &dl));       /* only in one side */
     CHECK(smart_delta(&before, &now, 9, &dl) && dl == -12);
 
+    /* SMART error log 01h */
+    uint8_t el[512];
+    memset(el, 0, sizeof el);
+    el[0] = 1; el[1] = 2; el[452] = 2;
+    uint8_t *e2 = el + 2 + 90;
+    e2[4 * 12 + 7] = 0x25; e2[60 + 1] = 0x40; e2[60 + 8] = 0x51;   /* READ DMA EXT, UNC, ERR */
+    el[511] = (uint8_t)(256 - (sector_checksum(el) & 0xff));
+    error_log eo;
+    CHECK(errorlog_parse(el, &eo) == 0 && eo.error_count == 2 && eo.index == 2 && eo.checksum);
+    CHECK(eo.last_command == 0x25 && eo.last_error == 0x40 && eo.last_status == 0x51);
+    memset(el, 0, sizeof el);
+    CHECK(errorlog_parse(el, &eo) == -1 && eo.error_count == 0);
+
+    /* device statistics (GPL 04h) and Phy counters (GPL 11h) */
+    uint8_t pg[512];
+    memset(pg, 0, sizeof pg);
+    pg[0] = 1; pg[2] = 0; pg[8] = 3; pg[9] = 1; pg[10] = 5; pg[11] = 7;
+    uint8_t pages[16];
+    CHECK(devstat_pages(pg, pages, 16) == 3 && pages[1] == 5 && pages[2] == 7);
+    dev_stats ds;
+    memset(&ds, 0, sizeof ds);
+    memset(pg, 0, sizeof pg); pg[0] = 1; pg[2] = 1;
+    /* qword at 24: sectors written = 4750000000, supported + valid */
+    unsigned long long swq = 4750000000ull | (3ull << 62);
+    for (int i = 0; i < 8; i++) pg[24 + i] = (uint8_t)(swq >> (8 * i));
+    unsigned long long hrs = 931ull | (3ull << 62);
+    for (int i = 0; i < 8; i++) pg[16 + i] = (uint8_t)(hrs >> (8 * i));
+    devstat_general(pg, &ds);
+    CHECK(ds.have_general && ds.sectors_written == 4750000000ll && ds.power_on_hours == 931 && ds.resets == -1);
+    memset(pg, 0, sizeof pg); pg[0] = 1; pg[2] = 5;
+    unsigned long long tmax = 48ull | (3ull << 62), tmin = (unsigned long long)(uint8_t)(int8_t)-3 | (3ull << 62);
+    for (int i = 0; i < 8; i++) { pg[32 + i] = (uint8_t)(tmax >> (8 * i)); pg[40 + i] = (uint8_t)(tmin >> (8 * i)); }
+    devstat_temperature(pg, &ds);
+    CHECK(ds.have_temp && ds.temp_max == 48 && ds.temp_min == -3 && ds.temp_now == -999);
+    memset(pg, 0, sizeof pg); pg[0] = 1; pg[2] = 7;
+    unsigned long long eu = 1ull | (3ull << 62);
+    for (int i = 0; i < 8; i++) pg[8 + i] = (uint8_t)(eu >> (8 * i));
+    devstat_ssd(pg, &ds);
+    CHECK(ds.have_ssd && ds.endurance_used == 1);
+    devstat_general(pg, &ds);                       /* wrong page: ignored */
+    CHECK(ds.sectors_written == 4750000000ll);
+    uint8_t ph[512];
+    memset(ph, 0, sizeof ph);
+    /* id 0x0001 (16-bit) = 7, id 0x200A (32-bit) = 3, id 0x100B = 2 */
+    ph[4] = 0x01; ph[5] = 0x10; ph[6] = 7; ph[7] = 0;
+    ph[8] = 0x0A; ph[9] = 0x20; ph[10] = 3;
+    ph[14] = 0x0B; ph[15] = 0x10; ph[16] = 2;
+    phy_counters pc;
+    CHECK(phy_parse(ph, &pc) == 0 && pc.count == 3 && pc.icrc == 7 && pc.comreset == 3 && pc.crc_h2d == 2 && pc.phy_nrdy == -1);
+    memset(ph, 0, sizeof ph);
+    CHECK(phy_parse(ph, &pc) == -1);
+
     /* issue form URL */
     char enc[64], url[2400];
     CHECK(url_encode("a b/c=d~", enc, sizeof enc) == 14 && !strcmp(enc, "a%20b%2Fc%3Dd~"));

@@ -171,6 +171,9 @@ static void job_smart(void) { drive_read_smart(&D, 1); }
 static void job_speed(void) { drive_speed_test(&D); }
 static int job_rc;
 static void job_selftest(void) { job_rc = drive_start_short_selftest(&D); }
+static void job_errlog(void) { drive_read_error_log(&D); }
+static void job_gpl(void) { drive_read_gpl(&D); }
+
 
 /* ---- pad ------------------------------------------------------------------ */
 
@@ -203,6 +206,70 @@ static unsigned gesture(unsigned buttons)
     if (!pressed) return 0;
     if (pressed == armed) { armed = 0; return pressed; }
     armed = (pressed & buttons) && !(pressed & ~buttons) ? pressed : 0;
+    return 0;
+}
+
+/* ---- first-run prompt -------------------------------------------------------
+ * A command this console never ran is shown once: CROSS runs it (journaled
+ * like the others), CIRCLE skips it and the journal remembers the skip until
+ * SQUARE twice. Returns 1 to run, 0 to skip, -1 on exit. */
+static int first_run_prompt(const char *title_s, const char *l1, const char *l2, const char *l3)
+{
+    while (1) {
+        read_pad();
+        if (quit || (pressed & BTN_START)) return -1;
+        if (pressed & BTN_CROSS) return 1;
+        if (pressed & BTN_CIRCLE) return 0;
+        begin_frame();
+        title();
+        text(30, 100, 20, YELLOW, "New on this console: %s", title_s);
+        text(30, 150, 16, WHITE, "%s", l1);
+        text(30, 172, 16, WHITE, "%s", l2);
+        text(30, 194, 16, GREY, "%s", l3);
+        text(30, 240, 16, GREY, "The call is written to the journal first. If it freezes the console, hold the power");
+        text(30, 262, 16, GREY, "button and start the app again: it skips the call. A skip is kept until SQUARE twice.");
+        text(30, 455, 14, GREY, "CROSS run it   CIRCLE skip it   START exit");
+        tiny3d_Flip();
+    }
+}
+
+typedef struct {
+    const char *name, *title, *l1, *l2, *l3, *progress;
+    void (*job)(void);
+    int (*wanted)(void);
+} optional_step;
+
+static int want_errlog(void) { return D.ata_ok && !D.demo; }
+static int want_gpl(void) { return D.ata_ok && !D.demo && D.id.gpl; }
+
+static const optional_step steps[] = {
+    {"error_log", "SMART READ LOG 01h (the error log)",
+     "Reads the drive's summary error log: how many command errors it recorded, and the last one.",
+     "Same path and same kind of read as the self-test log, which this console already ran.",
+     "Read-only. 512 bytes. Shown on the summary page and in the report.",
+     "SMART READ LOG 01h (the error log)", job_errlog, want_errlog},
+    {"gpl_logs", "READ LOG EXT 2Fh (general purpose logs)",
+     "Reads two logs: device statistics (04h: exact sectors written, endurance used,",
+     "temperature extremes) and the SATA Phy counters (11h: CRC errors, link resets).",
+     "Read-only. A 48-bit data-in command, the first on this path. Up to 5 reads of 512 bytes.",
+     "READ LOG EXT (device statistics, Phy counters)", job_gpl, want_gpl},
+};
+
+/* Runs the optional steps: prompt on the first run, skip a declined one, run the rest. -1 on exit. */
+static int optional_steps(void)
+{
+    for (unsigned k = 0; k < sizeof steps / sizeof steps[0]; k++) {
+        const optional_step *st = &steps[k];
+        if (!st->wanted()) continue;
+        int js = journal_state(st->name);
+        if (js == J_SKIPPED) continue;
+        if (js == J_NONE) {
+            int r = first_run_prompt(st->title, st->l1, st->l2, st->l3);
+            if (r < 0) return -1;
+            if (r == 0) { journal_skip(st->name); continue; }
+        }
+        run_job(st->progress, st->job);
+    }
     return 0;
 }
 
@@ -359,7 +426,8 @@ static void draw_summary(void)
     const ata_identity *i = &D.id;
     char h[48], dtext[256];
     float y = 140;
-    const float step = 22;
+    const float step = 21;
+    const dev_stats *ds = &D.ds;
 
     y = heading(y, "DRIVE");
     text(120, y - 20, 14, GREY, "attribute names: %s table", vendor_get(D.vendor)->name);
@@ -367,10 +435,23 @@ static void draw_summary(void)
     if (m->cycles >= 0) text(30, y, 16, WHITE, "Power-on %s, %d power cycles", h, m->cycles);
     else text(30, y, 16, WHITE, "Power-on %s", h);
     y += step;
-    if (m->life_left >= 0) text(30, y, 16, m->life_left <= 10 ? RED : WHITE, "Life left %d%% (attribute %d)", m->life_left, m->life_id);
+    /* The endurance indicator (device statistics) is "percent used" by the
+     * standard, but the Dahua reports 100 on a drive at 100% life: some
+     * firmware stores the remaining percent. So it is shown as a number, never
+     * as a verdict, and never in red. */
+    int eu = ds->have_ssd ? ds->endurance_used : -1;
+    if (m->life_left >= 0) {
+        float x = text(30, y, 16, m->life_left <= 10 ? RED : WHITE, "Life left %d%% (attribute %d)", m->life_left, m->life_id);
+        if (eu >= 0) text(x + 24, y, 16, GREY, "endurance indicator %d (device statistics)", eu);
+    } else if (eu >= 0)
+        text(30, y, 16, GREY, "Life: endurance indicator %d (device statistics; 0 = new, 100 = used up, some firmware inverts it)", eu);
     else text(30, y, 16, GREY, "Life left: no known attribute for this vendor");
     y += step;
-    if (m->writes_id && m->tb_written >= 0)
+    if (ds->have_general && ds->sectors_written >= 0)
+        text(30, y, 16, WHITE, "Host writes %.2f TB (device statistics, %lld sectors)%s",
+             (double)ds->sectors_written * i->logical_size / 1e12, ds->sectors_written,
+             m->writes_id && m->tb_written >= 0 ? "" : "   (no vendor attribute)");
+    else if (m->writes_id && m->tb_written >= 0)
         text(30, y, 16, WHITE, "Host writes %.2f TB (attribute %d, %s)", m->tb_written, m->writes_id, writes_unit_text(m->writes_unit));
     else if (m->writes_id)
         text(30, y, 16, GREY, "Host writes: attribute %d raw %llu (%s)", m->writes_id, (unsigned long long)m->writes_raw,
@@ -379,26 +460,33 @@ static void draw_summary(void)
     y += step;
     if (i->rotation == 1) {
         /* the PS3 firmware predates TRIM and never sends it: the SSD's own
-         * garbage collection does all the work, so spare area matters */
-        if (i->trim) text(30, y, 16, GREY, "TRIM supported, but the PS3 never sends it: the SSD relies on its own garbage collection.");
-        else text(30, y, 16, GREY, "TRIM not supported by this drive. The PS3 never sends it anyway.");
+         * garbage collection does all the work, so spare area (over-provisioning) matters */
+        text(30, y, 16, GREY, "TRIM: never sent by the PS3. Over-provisioning: set it on a PC before the install (README).");
         y += step;
     }
     y += 8;
 
     y = heading(y, "HEALTH");
-    if (D.cpu_temp >= 0)
-        text(30, y, 16, WHITE, "Temperature: drive %d C (warning at %d)   Cell %d C   RSX %d C", D.s.temperature, m->temp_limit,
-             D.cpu_temp, D.rsx_temp);
-    else
-        text(30, y, 16, WHITE, "Temperature: drive %d C (warning at %d)   console: n/a (383 rc 0x%x)", D.s.temperature,
-             m->temp_limit, (unsigned)D.temps_rc);
-    y += step;
-    if (D.have_stlog && D.log.count)
-        text(30, y, 16, WHITE, "Last self-test: %s, %s, at %u h", selftest_type_text(D.log.e[0].type),
-             selftest_status_text(D.log.e[0].status), D.log.e[0].hours);
-    else text(30, y, 16, GREY, D.have_stlog ? "Self-test log: empty" : "Self-test log: not readable");
-    y += step;
+    {
+        char mx[32] = "";
+        if (ds->have_temp && ds->temp_max != -999) snprintf(mx, sizeof mx, ", max ever %d", ds->temp_max);
+        if (D.cpu_temp >= 0)
+            text(30, y, 16, WHITE, "Temperature: drive %d C (warning at %d%s)   Cell %d C   RSX %d C", D.s.temperature,
+                 m->temp_limit, mx, D.cpu_temp, D.rsx_temp);
+        else
+            text(30, y, 16, WHITE, "Temperature: drive %d C (warning at %d%s)   console: n/a (383 rc 0x%x)", D.s.temperature,
+                 m->temp_limit, mx, (unsigned)D.temps_rc);
+        y += step;
+    }
+    {
+        float x;
+        if (D.have_stlog && D.log.count)
+            x = text(30, y, 16, WHITE, "Last self-test: %s, %s, at %u h", selftest_type_text(D.log.e[0].type),
+                     selftest_status_text(D.log.e[0].status), D.log.e[0].hours);
+        else x = text(30, y, 16, GREY, D.have_stlog ? "Self-test log: empty" : "Self-test log: not readable");
+        if (D.have_errlog) text(x + 24, y, 16, D.elog.error_count ? YELLOW : GREY, "ATA error log: %d", D.elog.error_count);
+        y += step;
+    }
     if (D.have_prev) {
         int j = 0, changed = 0;
         dtext[0] = 0;
@@ -416,6 +504,13 @@ static void draw_summary(void)
     text(30, y, 16, WHITE, "SATA link %s Gb/s now, drive max %s Gb/s.%s", gen_text(i->sata_cur_gen), gen_text(i->sata_max_gen),
          i->sata_cur_gen == 1 ? " The PS3 port is 1.5 Gb/s: about 150 MB/s at most." : "");
     y += step;
+    if (D.have_phy) {
+        const phy_counters *p = &D.phy;
+        long long crc = (p->icrc > 0 ? p->icrc : 0) + (p->crc_h2d > 0 ? p->crc_h2d : 0);
+        text(30, y, 16, crc ? YELLOW : GREY, "Link counters: %lld CRC errors, %lld resets, %lld PhyRdy drops (SATA Phy log)", crc,
+             p->comreset < 0 ? 0 : p->comreset, p->phy_nrdy < 0 ? 0 : p->phy_nrdy);
+        y += step;
+    }
     if (D.speed_done)
         text(30, y, 16, GREEN, "Speed test: write %.0f MB/s, read %.0f MB/s (%.0f MB file through the file system)",
              D.speed_mb / (D.speed_wsec > 0 ? D.speed_wsec : 1), D.speed_mb / (D.speed_rsec > 0 ? D.speed_rsec : 1), D.speed_mb);
@@ -755,6 +850,7 @@ int main(void)
         } else {
             drive_load_prev(&D);
             run_job("Reading the drive", job_probe);
+            if (optional_steps() < 0) break;
         }
         run_job("Reading the console firmware and temperatures", job_console);
         write_report();

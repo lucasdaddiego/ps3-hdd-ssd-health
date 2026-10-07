@@ -9,6 +9,10 @@
 #define APP_DIR "/dev_hdd0/tmp/hdd_ssd_health"
 #define DEMO_DIR APP_DIR "/demo"
 
+/* Journal state of one named call. SKIPPED = declined at the first-run prompt,
+ * kept until SQUARE twice clears the journal. */
+enum { J_NONE, J_PENDING, J_OK, J_BAD, J_FROZEN, J_SKIPPED };
+
 typedef struct {
     int info_rc, open_rc, identify_rc;
     uint64_t info_sectors;
@@ -20,12 +24,18 @@ typedef struct {
     int ata_ok;                  /* IDENTIFY came back valid: SMART uses the same path */
     int identify_frozen, smart_frozen, selftest_frozen, speed_frozen;
     char identify_note[64];
-    uint8_t identify[512], smart[512], thresh[512], stlog[512];
-    int have_identify, have_smart, have_thresh, have_stlog;
-    int smart_rc, thresh_rc, stlog_rc, selftest_rc;
+    uint8_t identify[512], smart[512], thresh[512], stlog[512], errlog[512];
+    int have_identify, have_smart, have_thresh, have_stlog, have_errlog;
+    int smart_rc, thresh_rc, stlog_rc, selftest_rc, errlog_rc;
     ata_identity id;
     smart_data s;
     selftest_log log;
+    error_log elog;
+    /* general purpose logs (READ LOG EXT): device statistics 04h and Phy counters 11h */
+    uint8_t devstat[512], phylog[512];      /* page 1 of 04h, and 11h: the sectors saved to disk */
+    int have_devstat, have_phy, gpl_rc, phy_rc;
+    dev_stats ds;
+    phy_counters phy;
     int vendor;                  /* VENDOR_* from the model string */
     smart_summary sum;
     /* the last read saved on disk before this start (the delta), and the
@@ -50,8 +60,12 @@ int drive_read_smart(drive_state *d, int full);
 int drive_start_short_selftest(drive_state *d);
 int drive_can_selftest(const drive_state *d);
 int drive_speed_test(drive_state *d);
+int drive_read_error_log(drive_state *d);
+int drive_read_gpl(drive_state *d);
 void drive_close(drive_state *d);
 void journal_clear(void);
+int journal_state(const char *name);
+void journal_skip(const char *name);
 int report_write(drive_state *d, char *path, int len);
 int report_copy_usb(const char *report_path, char *dst, int n);
 int compat_body(const drive_state *d, char *out, int n);
