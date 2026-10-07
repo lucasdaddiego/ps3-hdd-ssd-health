@@ -3,8 +3,8 @@
 <img src="docs/icon.png" width="320" alt="HDD/SSD Health icon">
 
 A PS3 homebrew app that reads the SMART data of the console's **internal drive**,
-HDD or SSD, and shows it on the TV. It also runs the drive's SMART short self-test
-and a file speed test. No PC and no opening the console.
+HDD or SSD, and shows it on the TV. It also runs the drive's SMART self-tests,
+short and extended, and a file speed test. No PC and no opening the console.
 
 It shows, on three pages (LEFT/RIGHT):
 - **Attributes:** the model, firmware, serial number, capacity and drive type (SSD,
@@ -56,6 +56,7 @@ and the result, and it goes into this table.
 
 | Model | Firmware | Drive | Version | Result | Source |
 |---|---|---|---|---|---|
+| Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 1.3.0 | all of 1.2.0, plus the extended self-test (three runs, about 2 min each on this SSD, all passed) and the pickup of a test that is still running at the next start | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 1.2.0 | all of 1.1.0, plus the error log and the two general purpose logs (device statistics, Phy counters) | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 1.1.0 | IDENTIFY, SMART reads, the short self-test, the speed test (write 25, read 63 MB/s), USB copy, QR scan and demo mode work | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 1.0.1 | IDENTIFY, SMART reads and the short self-test work | author |
@@ -71,7 +72,7 @@ ends with the same text.
 
 ## Install
 
-1. Download `HDD-SSD-Health-v1.2.0.pkg` from [Releases](../../releases).
+1. Download `HDD-SSD-Health-v1.3.0.pkg` from [Releases](../../releases).
 2. Copy it to `/dev_hdd0/packages/` (FTP), or to the root of a FAT32 USB stick.
 3. With HEN on, install it: Game → Package Manager → Install Package Files (Standard
    or USB).
@@ -88,10 +89,16 @@ ends with the same text.
    - UP/DOWN scroll the table, L1/R1 by a screen.
    - CIRCLE reads the drive again. Rows whose raw value changed since the
      previous read turn blue.
-   - TRIANGLE twice starts the short self-test (about 1–2 min) on its own
-     screen: a progress bar, a seconds counter, then the result. Any button
-     goes back to the table while the drive continues; TRIANGLE returns to the
-     test screen. The result comes from the new
+   - TRIANGLE offers a self-test: CROSS for the short one (about 1–2 min),
+     TRIANGLE for the extended one (the whole surface; the drive states
+     the minutes, often 60 or more). It runs on its own screen: a progress bar,
+     a seconds counter, then the result. Any other button goes back to the
+     table while the drive continues; TRIANGLE returns to the test screen.
+     START is blocked while a test runs: the drive is busy with the test, and
+     the console becomes very slow until it ends (seen on a PS3 Super Slim
+     during the extended test). Quit Game from the PS button still exits; the
+     next start then finds the test running and shows its progress, then the
+     result. Neither test can be aborted from the app. The result comes from the new
      entry in the drive's self-test log, not from a timer: a drive that accepts
      the command but never runs the test shows "no progress" in yellow, not a pass.
    - R2 twice runs the speed test: the app writes a 64 MB file in its folder
@@ -128,8 +135,9 @@ Files on the console, in `/dev_hdd0/tmp/hdd_ssd_health/`:
 The app sends only these ATA commands:
 - IDENTIFY DEVICE;
 - SMART READ DATA, READ THRESHOLDS and READ LOG 06h (the self-test log);
-- SMART EXECUTE OFF-LINE IMMEDIATE, subcommand 01h (short self-test in off-line
-  mode), and only when you press TRIANGLE twice.
+- SMART EXECUTE OFF-LINE IMMEDIATE, subcommand 01h (short self-test) or 02h
+  (extended self-test), both in off-line mode, and only after TRIANGLE and
+  your choice on the self-test screen.
 
 Since 1.2, two more read-only commands, each behind a first-run prompt (the
 app shows what the command does and asks for CROSS before it runs the first
@@ -150,8 +158,9 @@ on the author's console: accepted, no registers). So the app cannot tell
 whether a Host Protected Area is set.
 
 It never sends a write, a standby, a captive self-test or a SMART enable/disable.
-The short self-test does not change data: the drive checks itself and keeps
-serving normal I/O.
+The self-tests do not change data: the drive checks itself and keeps serving
+normal I/O. The extended one reads the whole surface, so it takes long and
+slows the drive a little while it runs.
 
 Besides the ATA commands, the app makes one other system call, journaled like
 the drive calls: 383 `sys_game_get_temperature`, the Cell and RSX temperatures

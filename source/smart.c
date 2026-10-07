@@ -158,6 +158,7 @@ int smart_parse(const uint8_t *data, const uint8_t *thresh, smart_data *o)
     o->selftest = data[363];
     o->offline_caps = data[367];
     o->short_minutes = data[372];
+    o->ext_minutes = data[373] == 0xFF ? (data[375] | data[376] << 8) : data[373];
     o->checksum = sector_checksum(data) == 0;
     o->thresh_checksum = thresh ? sector_checksum(thresh) == 0 : -1;
     return o->count ? 0 : -1;

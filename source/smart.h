@@ -33,6 +33,7 @@ typedef struct {
     uint8_t selftest;            /* byte 363: status << 4 | remaining tenths */
     uint8_t offline_caps;        /* byte 367: bit 4 = self-tests implemented */
     uint8_t short_minutes;       /* byte 372 */
+    int ext_minutes;             /* byte 373, or the word at 375 when 373 is 0xFF */
     int temperature;             /* attribute 194 or 190, -1 if none */
     int checksum, thresh_checksum;
 } smart_data;

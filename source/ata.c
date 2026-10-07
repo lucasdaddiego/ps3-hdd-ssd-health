@@ -290,6 +290,7 @@ void drive_probe(drive_state *d, void (*progress)(const char *msg))
     d->identify_frozen = *jstate("identify") == J_FROZEN;
     d->smart_frozen = *jstate("smart_data") == J_FROZEN;
     d->selftest_frozen = *jstate("selftest_start") == J_FROZEN;
+    d->selftest_long_frozen = *jstate("selftest_long_start") == J_FROZEN;
     d->speed_frozen = *jstate("speed_file") == J_FROZEN;
 
     progress("Reading the drive size (syscall 609)");
@@ -517,15 +518,18 @@ int drive_can_selftest(const drive_state *d)
            ((d->s.offline_caps & 0x10) || d->id.selftest_supported);
 }
 
-/* SMART EXECUTE OFF-LINE IMMEDIATE, subcommand 1 = short self-test in off-line
- * mode: the command returns at once and the drive tests in the background.
- * Never subcommand 0x81 (captive), which holds the drive until the test ends. */
-int drive_start_short_selftest(drive_state *d)
+/* SMART EXECUTE OFF-LINE IMMEDIATE, subcommand 1 = short, 2 = extended
+ * self-test, both in off-line mode: the command returns at once and the drive
+ * tests in the background. Never the captive forms (0x81, 0x82), which hold
+ * the drive until the test ends. Each type has its own journal entry. */
+int drive_start_selftest(drive_state *d, int type)
 {
+    const char *name = type == 2 ? "selftest_long_start" : "selftest_start";
     if (!drive_can_selftest(d)) return -1;
-    if (!jstart("selftest_start")) { d->selftest_frozen = 1; return -1; }
-    d->selftest_rc = ata_command(d, 0xD4, 0, 0x01, 0xB0, PROTO_NON_DATA, 0);
-    jdone("selftest_start", d->selftest_rc, d->selftest_rc == 0);
+    if (type == 2 && d->selftest_long_frozen) return -1;
+    if (!jstart(name)) { if (type == 2) d->selftest_long_frozen = 1; else d->selftest_frozen = 1; return -1; }
+    d->selftest_rc = ata_command(d, 0xD4, 0, type == 2 ? 0x02 : 0x01, 0xB0, PROTO_NON_DATA, 0);
+    jdone(name, d->selftest_rc, d->selftest_rc == 0);
     return d->selftest_rc;
 }
 
@@ -741,7 +745,8 @@ int report_write(drive_state *d, char *path, int len)
         if ((s->selftest >> 4) == 0xF)
             out("self-test now: running, %d%% done (byte 363 = 0x%02x)\n", 100 - (s->selftest & 0xF) * 10, s->selftest);
         else out("self-test now: %s (byte 363 = 0x%02x)\n", selftest_status_text(s->selftest), s->selftest);
-        out("short self-test about %u min; off-line capabilities 0x%02x\n", s->short_minutes, s->offline_caps);
+        out("short self-test about %u min, extended about %d min; off-line capabilities 0x%02x\n", s->short_minutes,
+            s->ext_minutes, s->offline_caps);
         char why[256];
         int h = smart_health(s, d->have_stlog ? &d->log : NULL, d->sum.temp_limit, why, sizeof why);
         out("health: %s (%s)\n", health_text(h), why);

@@ -22,7 +22,7 @@ typedef struct {
     int opened;
     int demo;                    /* sectors came from DEMO_DIR: the drive is never touched */
     int ata_ok;                  /* IDENTIFY came back valid: SMART uses the same path */
-    int identify_frozen, smart_frozen, selftest_frozen, speed_frozen;
+    int identify_frozen, smart_frozen, selftest_frozen, selftest_long_frozen, speed_frozen;
     char identify_note[64];
     uint8_t identify[512], smart[512], thresh[512], stlog[512], errlog[512];
     int have_identify, have_smart, have_thresh, have_stlog, have_errlog;
@@ -57,7 +57,7 @@ void console_info(drive_state *d);
 void drive_probe(drive_state *d, void (*progress)(const char *msg));
 int drive_demo_load(drive_state *d);
 int drive_read_smart(drive_state *d, int full);
-int drive_start_short_selftest(drive_state *d);
+int drive_start_selftest(drive_state *d, int type);   /* 1 short, 2 extended */
 int drive_can_selftest(const drive_state *d);
 int drive_speed_test(drive_state *d);
 int drive_read_error_log(drive_state *d);

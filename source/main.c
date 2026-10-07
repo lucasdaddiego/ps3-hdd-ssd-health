@@ -169,8 +169,8 @@ static void job_probe(void) { drive_probe(&D, progress); }
 static void job_console(void) { console_info(&D); }
 static void job_smart(void) { drive_read_smart(&D, 1); }
 static void job_speed(void) { drive_speed_test(&D); }
-static int job_rc;
-static void job_selftest(void) { job_rc = drive_start_short_selftest(&D); }
+static int job_rc, st_type;                  /* the self-test being started: 1 short, 2 extended, 0 found running */
+static void job_selftest(void) { job_rc = drive_start_selftest(&D, st_type); }
 static void job_errlog(void) { drive_read_error_log(&D); }
 static void job_gpl(void) { drive_read_gpl(&D); }
 
@@ -196,7 +196,7 @@ static void read_pad(void)
     held = now;
 }
 
-/* Two-press gestures (TRIANGLE self-test, SQUARE clear journal, R2 speed test):
+/* Two-press gestures (SQUARE clear journal, R2 speed test):
  * the first press arms, the same button fires, any other button disarms.
  * Returns the button that fired this frame, 0 otherwise. */
 static unsigned armed;
@@ -234,7 +234,8 @@ static int first_run_prompt(const char *title_s, const char *l1, const char *l2,
 }
 
 typedef struct {
-    const char *name, *title, *l1, *l2, *l3, *progress;
+    const char *name;       /* the first journal entry the job writes: its state decides the prompt */
+    const char *title, *l1, *l2, *l3, *progress;
     void (*job)(void);
     int (*wanted)(void);
 } optional_step;
@@ -248,7 +249,7 @@ static const optional_step steps[] = {
      "Same path and same kind of read as the self-test log, which this console already ran.",
      "Read-only. 512 bytes. Shown on the summary page and in the report.",
      "SMART READ LOG 01h (the error log)", job_errlog, want_errlog},
-    {"gpl_logs", "READ LOG EXT 2Fh (general purpose logs)",
+    {"gpl_devstat", "READ LOG EXT 2Fh (general purpose logs)",
      "Reads two logs: device statistics (04h: exact sectors written, endurance used,",
      "temperature extremes) and the SATA Phy counters (11h: CRC errors, link resets).",
      "Read-only. A 48-bit data-in command, the first on this path. Up to 5 reads of 512 bytes.",
@@ -579,7 +580,6 @@ static int running, seen_running;        /* the self-test state, with its functi
 
 static void draw_main(int page, int scroll, const char *st_msg, u32 st_color)
 {
-    const smart_data *s = &D.s;
     draw_header(page);
     if (!D.have_smart) {
         text(30, 120, 18, YELLOW, D.smart_frozen ? "SMART READ DATA froze the console before: skipped."
@@ -592,10 +592,7 @@ static void draw_main(int page, int scroll, const char *st_msg, u32 st_color)
     else draw_share();
 
     float y = 430;
-    if (armed == BTN_TRIANGLE)
-        text(30, y, 16, YELLOW, "Press TRIANGLE again to start the short self-test (about %u min). Any other button cancels.",
-             s->short_minutes ? s->short_minutes : 2);
-    else if (armed == BTN_SQUARE)
+    if (armed == BTN_SQUARE)
         text(30, y, 16, YELLOW, "Press SQUARE again to clear the freeze journal. Any other button cancels.");
     else if (armed == BTN_R2)
         text(30, y, 16, YELLOW, "Press R2 again: the app writes a 64 MB file in its folder, reads it back, deletes it.");
@@ -614,11 +611,12 @@ static void draw_main(int page, int scroll, const char *st_msg, u32 st_color)
     /* 8 px per glyph at size 14: a footer must stay under 98 characters */
     const char *sel = D.demo ? "SELECT back to start" : "SELECT to USB";
     if (page == 0)
-        text(30, 455, 14, GREY, "UP/DOWN scroll  CIRCLE re-read  %s%s%s  START exit",
+        text(30, 455, 14, GREY, "UP/DOWN scroll  CIRCLE re-read  %s%s%s%s",
              running ? "TRIANGLE test screen  " : drive_can_selftest(&D) ? "TRIANGLE self-test  " : "",
-             D.demo ? "" : "R2 speed test  ", sel);
+             D.demo ? "" : "R2 speed test  ", sel, running ? "" : "  START exit");
     else
-        text(30, 455, 14, GREY, "CIRCLE re-read  SQUARE twice clear journal  %s%s  START exit", D.demo ? "" : "R2 speed test  ", sel);
+        text(30, 455, 14, GREY, "CIRCLE re-read  SQUARE twice clear journal  %s%s%s", D.demo ? "" : "R2 speed test  ", sel,
+             running ? "" : "  START exit");
 }
 
 static void close_drive(void) { drive_close(&D); }
@@ -716,31 +714,64 @@ static int selftest_percent(void)
     return seen_running ? 100 - (D.s.selftest & 0xF) * 10 : -1;
 }
 
+/* Short or extended: CROSS short, TRIANGLE extended, CIRCLE cancel. Returns 1, 2 or 0. */
+static int selftest_choice(void)
+{
+    const smart_data *s = &D.s;
+    while (1) {
+        read_pad();
+        if (quit || (pressed & (BTN_CIRCLE | BTN_START))) return 0;
+        if (pressed & BTN_CROSS) return 1;
+        if ((pressed & BTN_TRIANGLE) && !D.selftest_long_frozen) return 2;
+        begin_frame();
+        title();
+        text(30, 100, 20, WHITE, "Which self-test?");
+        text(30, 150, 18, GREEN, "CROSS: short self-test, about %u min.", s->short_minutes ? s->short_minutes : 2);
+        text(30, 176, 16, GREY, "The drive checks its electronics and a small part of the surface.");
+        if (D.selftest_long_frozen)
+            text(30, 220, 18, RED, "Extended self-test: it froze this console before, so the app does not offer it.");
+        else
+            text(30, 220, 18, GREEN, "TRIANGLE: extended self-test, about %d min.", s->ext_minutes ? s->ext_minutes : 60);
+        text(30, 246, 16, GREY, "The drive reads its whole surface. Nothing is written.");
+        text(30, 290, 16, YELLOW, "The console is very slow while a test runs. Stay in the app until the test ends:");
+        text(30, 312, 16, YELLOW, "START is blocked during a test. Neither test can be aborted from this app.");
+        text(30, 455, 14, GREY, "CROSS short   TRIANGLE extended   CIRCLE cancel");
+        tiny3d_Flip();
+    }
+}
+
+static const char *selftest_title(void)
+{
+    return st_type == 2 ? "Extended self-test" : st_type == 1 ? "Short self-test" : "Self-test in progress (started earlier)";
+}
+
 /* The self-test as its own screen: progress bar, counter, then the result.
  * Any button goes back to the table; the drive continues the test. */
 static void selftest_screen(void)
 {
     while (1) {
         read_pad();
-        if (quit || pressed) return;
+        if (quit) return;
+        if (pressed & ~(running ? BTN_START : 0)) return;    /* START stays blocked during a test */
         selftest_poll();
         begin_frame();
         title();
         double sec = (double)(sysGetSystemTime() - started) / 1e6;
         if (running) {
             int pct = selftest_percent();
-            text(30, 100, 20, WHITE, "Short self-test");
+            text(30, 100, 20, WHITE, "%s", selftest_title());
             if (pct >= 0) text(30, 150, 30, GREEN, "%d%% done", pct);
             else text(30, 150, 30, GREEN, "Starting");
             rect(30, 200, 788, 18, PANEL);
             if (pct > 0) rect(30, 200, 788 * pct / 100.0f, 18, GREEN);
             text(30, 236, 20, WHITE, "%c  %.0f s", "|/-\\"[(int)(sec * 6) & 3], sec);
-            text(30, 280, 16, GREY, "The drive runs the test by itself and reports tenths. About %u min.",
-                 D.s.short_minutes ? D.s.short_minutes : 2);
+            text(30, 280, 16, GREY, "The drive runs the test by itself and reports tenths. About %d min.",
+                 st_type == 2 ? (D.s.ext_minutes ? D.s.ext_minutes : 60) : (D.s.short_minutes ? D.s.short_minutes : 2));
             text(30, 302, 16, GREY, "The counter runs while the console works. If it stops, the console froze.");
-            text(30, 455, 14, GREY, "Any button: back to the table, the drive continues the test");
+            text(30, 324, 16, YELLOW, "START is blocked: the console is very slow while a test runs. Wait for the result.");
+            text(30, 455, 14, GREY, "Any other button: back to the table, the drive continues the test");
         } else {
-            text(30, 100, 20, WHITE, "Short self-test");
+            text(30, 100, 20, WHITE, "%s", selftest_title());
             text(30, 150, 30, st_color, "%s", st_color == GREEN ? "Passed" : st_color == RED ? "Failed" : "No result");
             text(30, 200, 16, st_color, "%s", st_msg);
             text(30, 455, 14, GREY, "Any button: back to the table");
@@ -758,15 +789,28 @@ static int run(void)
     st_msg[0] = 0;
     st_color = WHITE;
     memset(&log_before, 0, sizeof log_before);
+    if (D.have_smart && !D.demo && (D.s.selftest >> 4) == 0xF) {    /* a test from an earlier session still runs */
+        running = seen_running = 1;
+        st_type = 0;
+        log_before_count = D.have_stlog ? D.log.count : 0;
+        if (log_before_count) log_before = D.log.e[0];
+        started = sysGetSystemTime();
+        next_poll = started + 3000000;
+        deadline = started + 60000000;
+    }
     while (1) {
         read_pad();
-        if (quit || (pressed & BTN_START)) return 0;
+        if (quit) return 0;
+        if ((pressed & BTN_START) && !running) return 0;
         if (D.demo && (pressed & BTN_SELECT)) return 1;
         unsigned gb = BTN_SQUARE;              /* only gestures that can fire now arm */
-        if (!running && drive_can_selftest(&D)) gb |= BTN_TRIANGLE;
         if (!running && !D.demo) gb |= BTN_R2;
         unsigned fired = gesture(gb);
         if (pressed) st_msg[0] = 0;
+        if ((pressed & BTN_START) && running) {        /* a test in the background makes the console very slow */
+            snprintf(st_msg, sizeof st_msg, "START is blocked while the self-test runs: the console is very slow until it ends.");
+            st_color = YELLOW;
+        }
         if (running && (pressed & BTN_TRIANGLE)) selftest_screen();   /* back to the running test */
         if (fired == BTN_SQUARE) {
             journal_clear();
@@ -802,10 +846,10 @@ static int run(void)
             speed_screen();             /* the result; the summary page keeps its own line */
             page = 1;
         }
-        if (fired == BTN_TRIANGLE && !running && drive_can_selftest(&D)) {
+        if ((pressed & BTN_TRIANGLE) && !running && drive_can_selftest(&D) && (st_type = selftest_choice()) != 0) {
             log_before_count = D.have_stlog ? D.log.count : 0;
             if (log_before_count) log_before = D.log.e[0];
-            run_job("Starting the short self-test", job_selftest);
+            run_job(st_type == 2 ? "Starting the extended self-test" : "Starting the short self-test", job_selftest);
             if (job_rc == 0) {
                 running = 1;
                 seen_running = 0;
