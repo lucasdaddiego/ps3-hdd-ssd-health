@@ -51,6 +51,9 @@ display|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= scn display "4:DOWN 6:CROSS 14:SNAP=display_main 16:CROSS 24:SNAP=calib 26:CIRCLE 30:TRIANGLE 36:SNAP=pat_white 38:RIGHT 40:RIGHT 42:RIGHT 44:RIGHT 46:RIGHT 50:SNAP=pat_ramp 52:RIGHT 56:SNAP=pat_grid 58:RIGHT 62:SNAP=pat_stripes 64:RIGHT 68:SNAP=pat_lag 69:EXIT" ;|
 mem|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= scn mem "4:DOWN 6:RIGHT 8:RIGHT 10:CROSS 18:SNAP=mem_main 20:CROSS 40:SNAP=mem_job 2000:SNAP=mem_done 2001:EXIT" ;|
+memrsx|all)
+    SAFE=$DEF_SAFE STATE= JOURNAL= scn memrsx "4:DOWN 6:RIGHT 8:RIGHT 10:CROSS 20:TRIANGLE 1000:SNAP=mem_rsx 1002:CIRCLE 1010:SNAP=home_memrsx 1011:EXIT"
+    grep -h "RSX memory" $P/build/sbx/memrsx/dev_hdd0/tmp/ps3_health/report-*.txt ;|
 net|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= scn net "4:DOWN 5:RIGHT 7:CROSS 15:SNAP=net_main 17:CROSS 400:SNAP=net_usb 402:TRIANGLE 500:SNAP=net_after 501:EXIT" ;|
 home|all)

@@ -14,5 +14,5 @@ with open(sys.argv[2], 'w') as f:
     f.write('};\nconst u8 fonts_bin_end[1];\nconst u32 fonts_bin_size = %d;\n' % len(d))
 PY
 cc -O2 -std=gnu11 -Wall -Wno-unused-variable -Wno-unused-parameter -Wno-incompatible-pointer-types-discards-qualifiers -Wno-macro-redefined \
-   -I"$P/stub" -I"$R/source" -o "$P/build/pv" "$R"/source/*.c "$P/stubs.c" "$P/build/fonts_bin.c" -lm -lpthread
+   -I"$P/stub" -I"$R/source" -o "$P/build/pv" "$R"/source/*.c "$P/stubs.c" "$P/raster.c" "$P/build/fonts_bin.c" -lm -lpthread
 print "built ${P#$R/}/build/pv"

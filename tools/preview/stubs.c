@@ -1,8 +1,9 @@
 /* Host stubs for the PS3 Health preview. The app's own sources compile on the
  * Mac against stub headers; this file gives them a world:
- *   - tiny3d: a small software rasterizer into a 1920x1080 float buffer
- *     (convex primitives, colour x A4R4G4B4 texel, alpha test, src-alpha blend,
- *     each pixel blended once per call);
+ *   - tiny3d: the primitives go to raster.c, a software RSX (each triangle
+ *     once, the top-left fill rule, colour x A4R4G4B4 texel, the alpha test,
+ *     source-alpha blending in 8-bit math, an 8-bit XRGB buffer), and the
+ *     textures to the free RSX memory that the console has;
  *   - the pad: a script of frames and buttons (PV_SCRIPT);
  *   - time: 1/60 s per flip;
  *   - files: /dev_* paths inside a sandbox (PV_ROOT);
@@ -32,16 +33,11 @@
 #include "arpa/inet.h"
 #include "sysmodule/sysmodule.h"
 #include "ppu-lv2.h"
+#include "raster.h"
 
-#define FW 1920
-#define FH 1080
 videoResolution Video_Resolution = {1920, 1080};
-static float fb[FH][FW][3];
-static unsigned stamp[FH][FW], call_id;
-static u8 *arena;
-static u32 arena_used;
 static float vpx, vpy, vsx = 1, vsy = 1;
-static int frame;
+static int frame, drawing;
 static u64 sim_us = 1000000;
 
 /* ---- script --------------------------------------------------------------- */
@@ -97,6 +93,7 @@ static void script_load(void)
         else ev[nev].btn = btn_of(a);
         nev++;
     }
+    drawing = render_on();
 }
 
 static unsigned buttons_now(int *spin)
@@ -110,11 +107,38 @@ static unsigned buttons_now(int *spin)
 
 /* ---- tiny3d --------------------------------------------------------------- */
 
-static struct { u32 off, w, h, stride; int fmt, filter; } tex;
-typedef struct { float x, y, u, v, r, g, b, a; } vtx;
-static vtx vb[400000];
+/* RSX local memory: tiny3d_AllocTexture gets what tiny3D leaves free on the
+ * console. That is the 249 MB of gcmGetConfiguration less what tiny3d_Init
+ * takes first, in its order and alignment (rsxutil.c, tiny3d.c): two colour
+ * buffers, the depth buffer (at least 1920 x 1088), two 256-byte fragment
+ * programs and the 1 MB vertex buffer. So the RSX memory test counts what the
+ * console counts: 222 MB at 1080p, 230 at 720p, 235 at 480p. */
+#define RSX_LOCAL 0x0F900000u
+static u8 *arena;                            /* the free RSX memory, from local offset rsx_base */
+static u32 rsx_base, rsx_next;
+
+static u32 align_up(u32 p, u32 a) { return (p + a - 1) & ~(a - 1); }
+
+static void rsx_layout(u32 w, u32 h)
+{
+    u32 pitch = 4 * ((w + 15) / 16 * 16), zpitch = 4 * (w > 1920 ? (w + 15) / 16 * 16 : 1920);
+    u32 zrows = h > 1088 ? (h + 15) / 16 * 16 : 1088, p = 0;
+    p = align_up(p, 64) + pitch * h;         /* the colour buffers */
+    p = align_up(p, 64) + pitch * h;
+    p = align_up(p, 64) + zpitch * zrows;    /* the depth buffer */
+    p = align_up(p, 256) + 256;              /* the fragment programs */
+    p = align_up(p, 256) + 256;
+    p = align_up(p, 64) + 1024 * 1024;       /* the vertex buffer */
+    rsx_base = rsx_next = p;
+    arena = calloc(1, RSX_LOCAL - p);
+}
+
+_Static_assert(TINY3D_TRIANGLES == RASTER_TRIANGLES && TINY3D_TRIANGLE_STRIP == RASTER_TRIANGLE_STRIP &&
+               TINY3D_TRIANGLE_FAN == RASTER_TRIANGLE_FAN && TINY3D_QUADS == RASTER_QUADS, "the primitive types pass through");
+
+static raster_tex tex;
+static raster_vtx vb[400000], cur;
 static int nv, ptype, ptex, pending;
-static vtx cur;
 static u32 ccol = 0xffffffff;
 static float cu, cv;
 
@@ -124,24 +148,24 @@ int tiny3d_Init(u32 size)
     const char *r = getenv("PV_RES");
     if (r && !strcmp(r, "720")) { Video_Resolution.width = 1280; Video_Resolution.height = 720; }
     if (r && !strcmp(r, "480")) { Video_Resolution.width = 720; Video_Resolution.height = 480; }
-    arena = calloc(1, 160 << 20);
+    rsx_layout(Video_Resolution.width, Video_Resolution.height);
+    raster_init(Video_Resolution.width, Video_Resolution.height);
     script_load();
     return 0;
 }
 void tiny3d_Project2D(void) {}
 void *tiny3d_AllocTexture(u32 size)
 {
-    arena_used = (arena_used + 127) & ~127u;
-    if (arena_used + size > (160u << 20)) return NULL;
-    void *p = arena + arena_used;
-    arena_used += size;
-    return p;
+    u32 p = align_up(rsx_next, 128);
+    if (size > RSX_LOCAL - p) return NULL;
+    rsx_next = p + size;
+    return arena + (p - rsx_base);
 }
 u32 tiny3d_TextureOffset(void *p) { return (u32)((u8 *)p - arena); }
 void tiny3d_SetTextureWrap(int unit, u32 offset, u32 w, u32 h, u32 stride, int fmt, int wu, int wv, int filter)
 {
-    (void)unit; (void)wu; (void)wv;
-    tex.off = offset; tex.w = w; tex.h = h; tex.stride = stride; tex.fmt = fmt; tex.filter = filter;
+    (void)unit; (void)fmt; (void)wu; (void)wv;
+    tex.texels = arena + offset; tex.w = w; tex.h = h; tex.stride = stride; tex.linear = filter != TEXTURE_NEAREST;
 }
 void tiny3d_UserViewport(int on, float px, float py, float sx, float sy, float a, float b)
 {
@@ -155,73 +179,17 @@ void tiny3d_BlendFunc(int e, int s, int d, int f) { (void)e; (void)s; (void)d; (
 static void push(void)
 {
     if (!pending || nv >= (int)(sizeof vb / sizeof vb[0])) return;
-    cur.r = (ccol >> 24 & 255) / 255.0f;
-    cur.g = (ccol >> 16 & 255) / 255.0f;
-    cur.b = (ccol >> 8 & 255) / 255.0f;
-    cur.a = (ccol & 255) / 255.0f;
+    cur.rgba = ccol;
     cur.u = cu;
     cur.v = cv;
     vb[nv++] = cur;
     pending = 0;
 }
 
-int tiny3d_SetPolygon(int type) { ptype = type; nv = 0; ptex = 0; pending = 0; call_id++; return 0; }
+int tiny3d_SetPolygon(int type) { ptype = type; nv = 0; ptex = 0; pending = 0; return 0; }
 void tiny3d_VertexPos(float x, float y, float z) { (void)z; push(); cur.x = x * vsx + vpx; cur.y = y * vsy + vpy; pending = 1; }
 void tiny3d_VertexColor(u32 c) { ccol = c; }
 void tiny3d_VertexTexture(float u, float v) { cu = u; cv = v; ptex = 1; }
-
-static void texel(int x, int y, float *o)
-{
-    if (x < 0) x = 0;
-    if (y < 0) y = 0;
-    if (x >= (int)tex.w) x = tex.w - 1;
-    if (y >= (int)tex.h) y = tex.h - 1;
-    u16 t = *(u16 *)(arena + tex.off + y * tex.stride + x * 2);
-    o[0] = (t >> 8 & 15) / 15.0f; o[1] = (t >> 4 & 15) / 15.0f; o[2] = (t & 15) / 15.0f; o[3] = (t >> 12 & 15) / 15.0f;
-}
-
-static void sample(float u, float v, float *o)
-{
-    if (tex.filter == 0) { texel((int)floorf(u * tex.w), (int)floorf(v * tex.h), o); return; }
-    float fx = u * tex.w - 0.5f, fy = v * tex.h - 0.5f;
-    int x0 = (int)floorf(fx), y0 = (int)floorf(fy);
-    float ax = fx - x0, ay = fy - y0, a[4], b[4], c[4], d[4];
-    texel(x0, y0, a); texel(x0 + 1, y0, b); texel(x0, y0 + 1, c); texel(x0 + 1, y0 + 1, d);
-    for (int k = 0; k < 4; k++) o[k] = (a[k] * (1 - ax) + b[k] * ax) * (1 - ay) + (c[k] * (1 - ax) + d[k] * ax) * ay;
-}
-
-static void raster(const vtx *a, const vtx *b, const vtx *c)
-{
-    if (!render_on()) return;
-    float area = (b->x - a->x) * (c->y - a->y) - (b->y - a->y) * (c->x - a->x);
-    if (fabsf(area) < 1e-6f) return;
-    int W = Video_Resolution.width, H = Video_Resolution.height;
-    int x0 = (int)floorf(fminf(a->x, fminf(b->x, c->x))), x1 = (int)ceilf(fmaxf(a->x, fmaxf(b->x, c->x)));
-    int y0 = (int)floorf(fminf(a->y, fminf(b->y, c->y))), y1 = (int)ceilf(fmaxf(a->y, fmaxf(b->y, c->y)));
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (x1 > W) x1 = W;
-    if (y1 > H) y1 = H;
-    for (int y = y0; y < y1; y++)
-        for (int x = x0; x < x1; x++) {
-            if (stamp[y][x] == call_id) continue;
-            float px = x + 0.5f, py = y + 0.5f;
-            float w0 = ((b->x - px) * (c->y - py) - (b->y - py) * (c->x - px)) / area;
-            float w1 = ((c->x - px) * (a->y - py) - (c->y - py) * (a->x - px)) / area;
-            float w2 = 1 - w0 - w1;
-            if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
-            float col[4] = {w0 * a->r + w1 * b->r + w2 * c->r, w0 * a->g + w1 * b->g + w2 * c->g, w0 * a->b + w1 * b->b + w2 * c->b,
-                            w0 * a->a + w1 * b->a + w2 * c->a};
-            if (ptex) {
-                float t[4];
-                sample(w0 * a->u + w1 * b->u + w2 * c->u, w0 * a->v + w1 * b->v + w2 * c->v, t);
-                for (int k = 0; k < 4; k++) col[k] *= t[k];
-            }
-            if (col[3] < 16 / 255.0f) continue;          /* the alpha test */
-            stamp[y][x] = call_id;
-            for (int k = 0; k < 3; k++) fb[y][x][k] = col[k] * col[3] + fb[y][x][k] * (1 - col[3]);
-        }
-}
 
 /* PV_VSTAT: tiny3d's vertex memory per frame (16 B position, 4 B colour,
  * 8 B texture per vertex, each polygon padded to 64 B; 1 MB per frame). */
@@ -232,32 +200,14 @@ void tiny3d_End(void)
     push();
     vbytes = (vbytes + nv * (20 + (ptex ? 8 : 0)) + 63) & ~63L;
     polys++;
-    switch (ptype) {
-    case TINY3D_QUADS:
-        for (int i = 0; i + 3 < nv; i += 4) { raster(&vb[i], &vb[i + 1], &vb[i + 2]); raster(&vb[i], &vb[i + 2], &vb[i + 3]); }
-        break;
-    case TINY3D_TRIANGLES:
-        for (int i = 0; i + 2 < nv; i += 3) raster(&vb[i], &vb[i + 1], &vb[i + 2]);
-        break;
-    case TINY3D_TRIANGLE_FAN:
-        for (int i = 1; i + 1 < nv; i++) raster(&vb[0], &vb[i], &vb[i + 1]);
-        break;
-    case TINY3D_TRIANGLE_STRIP:
-        for (int i = 0; i + 2 < nv; i++) raster(&vb[i], &vb[i + 1], &vb[i + 2]);
-        break;
-    default:
-        break;
-    }
+    if (drawing) raster_draw(ptype, vb, nv, ptex ? &tex : NULL);
     nv = 0;
 }
 
 void tiny3d_Clear(u32 color, int flags)
 {
     (void)flags;
-    if (!render_on()) return;
-    float r = (color >> 16 & 255) / 255.0f, g = (color >> 8 & 255) / 255.0f, b = (color & 255) / 255.0f;
-    for (int y = 0; y < FH; y++)
-        for (int x = 0; x < FW; x++) { fb[y][x][0] = r; fb[y][x][1] = g; fb[y][x][2] = b; }
+    if (drawing) raster_clear(color);
 }
 
 static void snap(const char *name)
@@ -269,11 +219,12 @@ static void snap(const char *name)
     int W = Video_Resolution.width, H = Video_Resolution.height;
     fprintf(f, "P6\n%d %d\n255\n", W, H);
     for (int y = 0; y < H; y++)
-        for (int x = 0; x < W; x++)
-            for (int k = 0; k < 3; k++) {
-                float v = fb[y][x][k];
-                fputc(v <= 0 ? 0 : v >= 1 ? 255 : (int)(v * 255 + 0.5f), f);
-            }
+        for (int x = 0; x < W; x++) {
+            u32 c = raster_pixel(x, y);
+            fputc(c >> 16 & 255, f);
+            fputc(c >> 8 & 255, f);
+            fputc(c & 255, f);
+        }
     fclose(f);
     fprintf(stderr, "snap %s at frame %d\n", name, frame);
 }
@@ -291,6 +242,7 @@ void tiny3d_Flip(void)
     if (vbytes > vmax) { vmax = vbytes; pmax = polys; vmax_frame = frame; }
     vbytes = polys = 0;
     frame++;
+    drawing = render_on();
     sim_us += 16667;
     usleep(1000);                            /* a real millisecond per frame: job threads keep pace */
     if (quit_now) exit(0);
