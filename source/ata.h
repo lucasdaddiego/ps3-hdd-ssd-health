@@ -6,7 +6,8 @@
 #include <stdint.h>
 #include "smart.h"
 
-#define APP_DIR "/dev_hdd0/tmp/hdd_ssd_health"
+#define APP_DIR "/dev_hdd0/tmp/ps3_health"
+#define OLD_APP_DIR "/dev_hdd0/tmp/hdd_ssd_health"   /* 1.x: moved to APP_DIR at the first start */
 #define DEMO_DIR APP_DIR "/demo"
 
 /* Journal state of one named call. SKIPPED = declined at the first-run prompt,
@@ -20,12 +21,14 @@ typedef struct {
     uint8_t info_raw[64];
     uint32_t handle;
     int opened;
+    int probed;                  /* read in this session (or demo data loaded): the report has a drive section */
     int demo;                    /* sectors came from DEMO_DIR: the drive is never touched */
     int ata_ok;                  /* IDENTIFY came back valid: SMART uses the same path */
     int identify_frozen, smart_frozen, selftest_frozen, selftest_long_frozen, speed_frozen;
     char identify_note[64];
     uint8_t identify[512], smart[512], thresh[512], stlog[512], errlog[512];
     int have_identify, have_smart, have_thresh, have_stlog, have_errlog;
+    int dumps_dirty;             /* a read happened since the .bin dumps and smart.when were written */
     int smart_rc, thresh_rc, stlog_rc, selftest_rc, errlog_rc;
     ata_identity id;
     smart_data s;
@@ -43,8 +46,7 @@ typedef struct {
     int have_prev, have_last;
     char prev_when[32], prev_model[41];
     smart_data prev, last;
-    /* the console: firmware from version.txt, temperatures from syscall 383 */
-    char firmware[16];
+    /* the console temperatures, syscall 383 */
     int cpu_temp, rsx_temp, temps_rc;
     /* speed test: a 64 MB file written and read back through the file system */
     int speed_done, speed_rc;
@@ -52,8 +54,17 @@ typedef struct {
 } drive_state;
 
 int fs_selftest(int *mkdir_rc, int *open_rc, int *write_rc);
+int fs_write_file(const char *path, const void *data, uint64_t len, int append);   /* 0, or the LV2 rc (-1: short write) */
+int fs_read_file(const char *path, void *data, int n);       /* bytes read, -1 when missing */
+int usb_find(char *dir, int n);                              /* the first /dev_usb00N: 0, or -1 when none */
 void drive_load_prev(drive_state *d);
 void console_info(drive_state *d);
+extern char console_fw[16];                                 /* "4.93" from version.txt, "" when unknown */
+void console_firmware(void);                                /* fills console_fw, once at start */
+int console_temps(int *cpu, int *rsx);                        /* syscall 383, journal "temps"; the rc */
+int fan_policy_read(int *percent, int *mode);                 /* syscall 409, read-only; journal "fan_policy"; the rc */
+/* A file of 64 x 1 MB written and read back in dir, then deleted; the journal name is jname. */
+int file_speed_test(const char *dir, const char *jname, double *mb, double *wsec, double *rsec);
 void drive_probe(drive_state *d, void (*progress)(const char *msg));
 int drive_demo_load(drive_state *d);
 int drive_read_smart(drive_state *d, int full);
@@ -63,11 +74,10 @@ int drive_speed_test(drive_state *d);
 int drive_read_error_log(drive_state *d);
 int drive_read_gpl(drive_state *d);
 void drive_close(drive_state *d);
-void journal_clear(void);
+int journal_clear(void);                                   /* 0, or the write rc */
 int journal_state(const char *name);
 void journal_skip(const char *name);
-int report_write(drive_state *d, char *path, int len);
-int report_copy_usb(const char *report_path, char *dst, int n);
+void drive_report(drive_state *d, const char *when);       /* the drive section of the report + the .bin dumps */
 int compat_body(const drive_state *d, char *out, int n);
 int compat_title(const drive_state *d, char *out, int n);
 const char *writes_unit_text(int unit);

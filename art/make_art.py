@@ -6,10 +6,10 @@ XMB background) into pkgfiles/.
 
 Font: Inter (SIL Open Font License), Inter[opsz,wght].ttf from
 github.com/google/fonts/tree/main/ofl/inter; only the rendered text ends up in
-the PNGs. Everything else is drawn here: a 2.5" drive whose left half is an
-HDD platter and right half SSD flash, crossed by a heartbeat line.
+the PNGs. Everything else is drawn here: a PS3 Super Slim seen from the front
+(draw_console), crossed by a heartbeat line.
 
-The icon has a transparent background: on the XMB the drive, the words and
+The icon has a transparent background: on the XMB the console, the words and
 the icon's own trace sit directly on the wallpaper. The wallpaper's trace
 starts right of the XMB title text (TRACE_X0) at the icon trace's screen
 height (TRACE_Y, both measured from a TV photo of the selected icon), so the
@@ -24,7 +24,7 @@ OUT = os.path.join(HERE, '..', 'pkgfiles')
 SS = 4                                     # supersampling factor
 
 NAVY_TOP, NAVY_BOTTOM = (6, 14, 28), (10, 38, 72)
-GREEN, CYAN = (62, 240, 138), (63, 208, 255)
+GREEN = (62, 240, 138)
 TRACE_Y = 0.467          # the trace's screen height: between the two words of the selected XMB icon
 TRACE_X0 = 0.545         # where the wallpaper's trace starts: right of the XMB title and date text
 ICON_TRACE = 0.51        # the trace's height inside the icon (0..1), the same point on screen
@@ -79,87 +79,63 @@ def rounded_mask(size, box, r):
     ImageDraw.Draw(m).rounded_rectangle(box, r, fill=255)
     return m
 
-def draw_drive(img, x0, y0, w):
-    """2.5" drive seen from the top: HDD platter on the left, SSD flash on the right."""
-    h = round(w * 0.70)
-    x1, y1 = x0 + w, y0 + h
-    r = round(w * 0.06)
+def draw_console(img, x0, y0, w):
+    """A PS3 Super Slim seen from the front and a little above: the sloped
+    top with the sliding disc cover, the lower body, the power light."""
+    h = round(w * 0.42)
     d = ImageDraw.Draw(img)
+    r = round(w * 0.04)
     # shadow
     sh = Image.new('RGBA', img.size, (0, 0, 0, 0))
-    ImageDraw.Draw(sh).rounded_rectangle((x0 + w * .02, y0 + w * .04, x1 + w * .02, y1 + w * .04), r, fill=(0, 0, 0, 150))
+    ImageDraw.Draw(sh).rounded_rectangle((x0 + w * .02, y0 + h * .10, x0 + w * 1.02, y0 + h * 1.06), r, fill=(0, 0, 0, 150))
     img.alpha_composite(sh.filter(ImageFilter.GaussianBlur(w * .03)))
-    # metal body
-    body = vgradient(w, h, (214, 221, 230), (128, 140, 154)).convert('RGBA')
-    img.paste(body, (x0, y0), rounded_mask((w, h), (0, 0, w - 1, h - 1), r))
-    d.rounded_rectangle((x0, y0, x1, y1), r, outline=(70, 80, 92, 255), width=max(2, w // 120))
-    inset = w * .045
-    d.rounded_rectangle((x0 + inset, y0 + inset, x1 - inset, y1 - inset), r * .6,
-                        outline=(160, 170, 182, 255), width=max(1, w // 220))
-    # screws
-    for sx, sy in ((x0 + inset * .55, y0 + inset * .55), (x1 - inset * .55, y0 + inset * .55),
-                   (x0 + inset * .55, y1 - inset * .55), (x1 - inset * .55, y1 - inset * .55)):
-        sr = w * .016
-        d.ellipse((sx - sr, sy - sr, sx + sr, sy + sr), fill=(96, 106, 118, 255))
-        d.line((sx - sr * .7, sy, sx + sr * .7, sy), fill=(60, 66, 74, 255), width=max(1, w // 300))
-    mid = x0 + w * .5
-    # HDD half: platter, spindle, actuator arm
-    pcx, pcy, pr = x0 + w * .265, y0 + h * .5, h * .36
-    for i in range(24):
-        t = i / 23
-        rr = pr * (1 - t * .75)
-        c = round(200 - 70 * math.sin(t * math.pi * 1.5) ** 2)
-        d.ellipse((pcx - rr, pcy - rr, pcx + rr, pcy + rr), fill=(c, c + 6, c + 14, 255))
-    for k in (.92, .78, .64, .50):
-        rr = pr * k
-        d.ellipse((pcx - rr, pcy - rr, pcx + rr, pcy + rr), outline=(150, 160, 172, 255), width=max(1, w // 400))
-    hl = Image.new('RGBA', img.size, (0, 0, 0, 0))     # sheen
-    ImageDraw.Draw(hl).pieslice((pcx - pr, pcy - pr, pcx + pr, pcy + pr), 200, 250, fill=(255, 255, 255, 70))
-    img.alpha_composite(hl.filter(ImageFilter.GaussianBlur(w * .01)))
-    sr = pr * .2
-    d.ellipse((pcx - sr, pcy - sr, pcx + sr, pcy + sr), fill=(120, 130, 142, 255), outline=(80, 88, 98, 255),
-              width=max(1, w // 300))
-    px, py = x0 + w * .44, y0 + h * .80
-    d.ellipse((px - w * .03, py - w * .03, px + w * .03, py + w * .03), fill=(70, 78, 88, 255))
-    d.line((px, py, pcx + pr * .25, pcy - pr * .35), fill=(58, 64, 72, 255), width=max(2, round(w * .022)))
-    d.line((px, py, pcx + pr * .25, pcy - pr * .35), fill=(110, 118, 128, 255), width=max(1, round(w * .007)))
-    # SSD half: board with flash chips and a controller
-    bx0, by0, bx1, by1 = mid + w * .03, y0 + h * .14, x1 - w * .07, y1 - h * .14
-    d.rounded_rectangle((bx0, by0, bx1, by1), w * .015, fill=(24, 58, 52, 255), outline=(14, 36, 32, 255),
-                        width=max(1, w // 300))
-    cw, ch = (bx1 - bx0) * .40, (by1 - by0) * .36
-    for cx, cy in ((bx0 + (bx1 - bx0) * .06, by0 + (by1 - by0) * .08), (bx0 + (bx1 - bx0) * .54, by0 + (by1 - by0) * .08),
-                   (bx0 + (bx1 - bx0) * .06, by0 + (by1 - by0) * .56)):
-        d.rounded_rectangle((cx, cy, cx + cw, cy + ch), w * .008, fill=(22, 24, 28, 255), outline=(60, 64, 70, 255),
-                            width=max(1, w // 400))
-        d.line((cx + cw * .12, cy + ch * .3, cx + cw * .55, cy + ch * .3), fill=(90, 96, 104, 255), width=max(1, w // 300))
-    kx, ky = bx0 + (bx1 - bx0) * .58, by0 + (by1 - by0) * .60
-    d.rounded_rectangle((kx, ky, kx + cw * .75, ky + ch * .80), w * .008, fill=(34, 38, 44, 255),
-                        outline=CYAN + (255,), width=max(1, w // 300))
-    # seam between the halves
-    d.line((mid, y0 + inset * 1.4, mid, y1 - inset * 1.4), fill=(90, 100, 112, 255), width=max(1, w // 250))
-    # SATA connector on the right edge
-    for i in range(7):
-        gy = y0 + h * (.30 + i * .06)
-        d.rectangle((x1 - w * .028, gy, x1 - w * .008, gy + h * .03), fill=(214, 172, 74, 255))
+    # lower body: a dark slab
+    body = vgradient(w, round(h * .55), (58, 62, 70), (22, 24, 28)).convert('RGBA')
+    by = y0 + round(h * .45)
+    img.paste(body, (x0, by), rounded_mask((w, round(h * .55)), (0, 0, w - 1, round(h * .55) - 1), r))
+    d.rounded_rectangle((x0, by, x0 + w, y0 + h), r, outline=(12, 14, 18, 255), width=max(2, w // 160))
+    # sloped top: a lighter parallelogram, glossy
+    top = [(x0 + w * .06, y0), (x0 + w * .94, y0), (x0 + w, by + h * .02), (x0, by + h * .02)]
+    d.polygon(top, fill=(96, 102, 112, 255), outline=(40, 44, 50, 255))
+    hl = Image.new('RGBA', img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(hl).polygon([(x0 + w * .08, y0 + h * .02), (x0 + w * .60, y0 + h * .02), (x0 + w * .50, by - h * .02),
+                                (x0 + w * .02, by - h * .02)], fill=(255, 255, 255, 46))
+    img.alpha_composite(hl.filter(ImageFilter.GaussianBlur(w * .012)))
+    # the sliding disc cover: a seam and the cover's lip
+    d.line((x0 + w * .36, y0 + h * .03, x0 + w * .30, by), fill=(30, 33, 38, 255), width=max(2, w // 200))
+    d.line((x0 + w * .36, y0 + h * .03, x0 + w * .94, y0 + h * .03), fill=(30, 33, 38, 255), width=max(1, w // 300))
+    # front: the vents and the two USB ports, the power light
+    for i in range(14):
+        vx = x0 + w * (.08 + i * .028)
+        d.line((vx, by + h * .18, vx, by + h * .38), fill=(14, 16, 20, 255), width=max(1, w // 260))
+    for ux in (.62, .68):
+        d.rectangle((x0 + w * ux, by + h * .20, x0 + w * (ux + .045), by + h * .30), fill=(10, 12, 16, 255),
+                    outline=(70, 76, 86, 255), width=max(1, w // 400))
+    lx, ly = x0 + w * .86, by + h * .26
+    glow = Image.new('RGBA', img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse((lx - w * .05, ly - w * .05, lx + w * .05, ly + w * .05), fill=GREEN + (120,))
+    img.alpha_composite(glow.filter(ImageFilter.GaussianBlur(w * .02)))
+    d.ellipse((lx - w * .012, ly - w * .012, lx + w * .012, ly + w * .012), fill=GREEN + (255,))
+    # the PS logo spot and the base feet
+    d.ellipse((x0 + w * .49, by + h * .40, x0 + w * .51, by + h * .40 + w * .02), outline=(120, 126, 136, 255), width=max(1, w // 300))
     return h
 
 def icon(font_path):
     W, H = 320 * SS, 176 * SS
     img = Image.new('RGBA', (W, H), (0, 0, 0, 0))
-    dw = round(W * .40)
-    dh_nominal = round(dw * .70)
-    y0 = round(H * ICON_TRACE - dh_nominal * .52)       # the drive sits so its trace is at ICON_TRACE
-    dh = draw_drive(img, round(W * .04), y0, dw)
-    cy = y0 + dh * .52
-    pts = pulse_points(0, W * .47, cy, dh * .40) + [(W, cy)]   # the pulse over the platter, then flat to the edge
+    dw = round(W * .44)
+    dh_nominal = round(dw * .42)
+    y0 = round(H * ICON_TRACE - dh_nominal * .62)       # the console sits so its trace is at ICON_TRACE
+    dh = draw_console(img, round(W * .03), y0, dw)
+    cy = y0 + dh * .62
+    pts = pulse_points(0, W * .50, cy, dh * .55) + [(W, cy)]   # the pulse over the console, then flat to the edge
     glow_line(img, pts, GREEN, 4 * SS, 4 * SS)
-    tx, room = W * .50, W * .48               # text column: fit "HDD/SSD" to its width
-    size = 40 * SS
-    while font(font_path, size, 800).getlength('HDD/SSD') > room:
+    tx, room = W * .52, W * .46               # text column: fit "Health" to its width
+    size = 44 * SS
+    while font(font_path, size, 800).getlength('Health') > room:
         size -= SS
     f1, f2 = font(font_path, size, 800), font(font_path, round(size * .80), 600)
-    shadow_text(img, (tx, H * .10), 'HDD/SSD', f1, (255, 255, 255, 255), 3 * SS)      # above the wallpaper's trace
+    shadow_text(img, (tx, H * .08), 'PS3', f1, (255, 255, 255, 255), 3 * SS)          # above the wallpaper's trace
     shadow_text(img, (tx + SS, H * .58), 'Health', f2, GREEN + (255,), 3 * SS)       # below it
     return img.resize((320, 176), Image.LANCZOS)
 
@@ -182,12 +158,12 @@ def background():
         pts = [(x, H * (.60 + k * .06) + amp * 2 * math.sin(x / W * math.pi * 2.2 + phase)) for x in range(0, W + 40, 40)]
         bd.line(pts, fill=(120, 200, 255, alpha), width=36)
         img.alpha_composite(band.filter(ImageFilter.GaussianBlur(28)))
-    dw = round(W * .36)
+    dw = round(W * .38)
     x0 = round(W * .56)
-    y0 = round(H * TRACE_Y - round(dw * .70) * .52)     # the trace at TRACE_Y, like the icon's
-    dh = draw_drive(img, x0, y0, dw)
-    cy = y0 + dh * .52
-    # the trace from TRACE_X0 to the right edge, its spike over the platter (x0 + .265 dw)
+    y0 = round(H * TRACE_Y - round(dw * .42) * .62)     # the trace at TRACE_Y, like the icon's
+    dh = draw_console(img, x0, y0, dw)
+    cy = y0 + dh * .62
+    # the trace from TRACE_X0 to the right edge, its spike over the console
     shape = [(TRACE_X0, 0), (.575, 0), (.595, -.12), (.615, 0), (.635, 0), (.650, .28), (.668, -1),
              (.690, .55), (.708, 0), (.75, 0), (.78, -.22), (.815, 0), (.98, 0)]
     glow_line(img, [(W * fx, cy + fy * dh * .55) for fx, fy in shape], GREEN, 10, 18)

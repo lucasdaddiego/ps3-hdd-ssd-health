@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check an EBOOT.BIN from make_self_npdrm, against its ELF when given.
 
-    python3 -I verify_self.py build/pkg/USRDIR/EBOOT.BIN [build/hdd_ssd_health.elf]
+    python3 -I verify_self.py build/pkg/USRDIR/EBOOT.BIN [build/ps3_health.elf]
 
 The macOS ARM64 make_self crashed with a bus error after "self written in
 memory", so build.sh runs this before any pkg leaves the Mac. make_self writes

@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Build hdd_ssd_health.gnpdrm.pkg. Toolchain: $PS3DEV or ~/ps3dev, made by sdk_setup.sh
+# Build ps3_health.gnpdrm.pkg. Toolchain: $PS3DEV or ~/ps3dev, made by sdk_setup.sh
 # (the ps3dev bundle with PSL1GHT's 2020 runtime). Runs the Mac-side decoder
 # test first, and checks the signed EBOOT against the ELF before it trusts the pkg.
 set -e
@@ -13,7 +13,7 @@ t=$(mktemp -d)
 cc -std=c99 -Wall -Wextra -o $t/test_smart test/test_smart.c source/smart.c source/vendor.c source/compat.c source/qrcodegen.c
 $t/test_smart
 rm -r $t
-rm -f hdd_ssd_health.pkg hdd_ssd_health.gnpdrm.pkg
+rm -f ps3_health.pkg ps3_health.gnpdrm.pkg
 make pkg
-${PYTHON:-python3} -I verify_self.py build/pkg/USRDIR/EBOOT.BIN build/hdd_ssd_health.elf
-ls -la hdd_ssd_health.gnpdrm.pkg
+${PYTHON:-python3} -I verify_self.py build/pkg/USRDIR/EBOOT.BIN build/ps3_health.elf
+ls -la ps3_health.gnpdrm.pkg

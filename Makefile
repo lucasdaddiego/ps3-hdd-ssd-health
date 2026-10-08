@@ -15,7 +15,7 @@ include $(PSL1GHT)/ppu_rules
 # SOURCES is a list of directories containing source code
 # INCLUDES is a list of directories containing extra header files
 #---------------------------------------------------------------------------------
-TARGET		:=	hdd_ssd_health
+TARGET		:=	ps3_health
 BUILD		:=	build
 SOURCES		:=	source
 DATA		:=	data
@@ -23,7 +23,7 @@ INCLUDES	:=	include
 PKGFILES	:=	$(CURDIR)/pkgfiles
 SFOXML		:=	$(CURDIR)/sfo.xml
 
-TITLE		:=	HDD/SSD Health
+TITLE		:=	PS3 Health
 APPID		:=	HDSH00001
 CONTENTID	:=	EP0001-$(APPID)_00-0000000000000000
 
@@ -39,7 +39,7 @@ LDFLAGS		=	$(MACHDEP) -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS	:=	-ltiny3d -lgcm_sys -lfont3d -lio -lm -lsysutil -lrsx
+LIBS	:=	-ltiny3d -lgcm_sys -lio -lm -lsysutil -lrsx -lnet -lnetctl -lsysmodule
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
@@ -145,6 +145,9 @@ $(OUTPUT).self: $(OUTPUT).elf
 	@$(SPRX) $(BUILDDIR)/$(notdir $<)
 	@touch $@
 $(OUTPUT).elf:	$(OFILES)
+
+# ui.c includes fonts_bin.h, which the bin2o rule writes next to fonts.bin.o
+ui.o: fonts.bin.o
 
 #---------------------------------------------------------------------------------
 # This rule links in binary data with the .bin extension

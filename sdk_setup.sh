@@ -1,7 +1,8 @@
 #!/bin/zsh
 # Make $PS3DEV (default ~/ps3dev) an SDK whose apps start on this console:
 # the ps3dev nightly-2026-07-26 bundle (host tools, ppu-gcc 7.2) with PSL1GHT's
-# 2020 runtime (6e565a7) and tiny3D + libfont3d rebuilt against it.
+# 2020 runtime (6e565a7) and tiny3D rebuilt against it. Both are pinned to
+# full commit hashes: a newer PSL1GHT runtime does not start on this console.
 # Needs: zsh, curl, git, make, shasum (macOS arm64/x86_64 or Linux x86_64).
 #
 # Apps linked with the bundle's own runtime (PSL1GHT 2021+) die before main on
@@ -31,15 +32,16 @@ if [[ ! -x $PS3DEV/ppu/bin/ppu-gcc ]]; then
   rm -r $d
 fi
 
+PSL1GHT_REV=6e565a70e927f55813babe86dc6f64149535f908   # 2020-11-25
+TINY3D_REV=9b02ae6e9f21ff15185f8a3846bdca5304d7e0ae    # 2021-11-13
 t=$(mktemp -d)
 git clone -q https://github.com/ps3dev/PSL1GHT $t/psl1ght
-git -C $t/psl1ght checkout -q 6e565a7
+git -C $t/psl1ght checkout -q $PSL1GHT_REV
 make -C $t/psl1ght/ppu --no-print-directory > $t/psl1ght.log 2>&1 || { tail -20 $t/psl1ght.log; exit 1 }
 make -C $t/psl1ght/ppu install --no-print-directory > /dev/null
 git clone -q https://github.com/wargio/tiny3D $t/tiny3d
-git -C $t/tiny3d checkout -q 9b02ae6
+git -C $t/tiny3d checkout -q $TINY3D_REV
 make -C $t/tiny3d/lib install --no-print-directory > /dev/null 2>&1
-make -C $t/tiny3d/libfont install --no-print-directory > /dev/null 2>&1
 rm -rf $t
 print "PSL1GHT 6e565a7 + tiny3D 9b02ae6, $(date -u +%F)" > $PS3DEV/.runtime-2020
 print "$PS3DEV: runtime PSL1GHT 6e565a7 (2020), tiny3D 9b02ae6"

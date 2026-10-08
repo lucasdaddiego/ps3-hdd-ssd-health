@@ -47,7 +47,7 @@ jobs:
           python3 -I - <<'PY'
           import xml.etree.ElementTree as ET
           v = {e.get('name'): e.text.strip() for e in ET.parse('sfo.xml').getroot()}
-          assert v['TITLE'] == 'HDD/SSD Health' and v['TITLE_ID'] == 'HDSH00001', v
+          assert v['TITLE'] == 'PS3 Health' and v['TITLE_ID'] == 'HDSH00001', v
           PY
 
   pkg:
@@ -67,7 +67,7 @@ jobs:
       - name: make pkg
         run: |
           make pkg
-          ls -la hdd_ssd_health.gnpdrm.pkg build/pkg/USRDIR/EBOOT.BIN
+          ls -la ps3_health.gnpdrm.pkg build/pkg/USRDIR/EBOOT.BIN
 
       - name: Verify the signed EBOOT against the ELF
         if: env.PS3DEV_KEYS_TOML != ''
@@ -76,11 +76,11 @@ jobs:
           venv/bin/pip install -q pycryptodome
           umask 077
           printf '%s\n' "$PS3DEV_KEYS_TOML" > keys.toml
-          PS3DEV_KEYS=$PWD/keys.toml venv/bin/python3 -I verify_self.py build/pkg/USRDIR/EBOOT.BIN build/hdd_ssd_health.elf
+          PS3DEV_KEYS=$PWD/keys.toml venv/bin/python3 -I verify_self.py build/pkg/USRDIR/EBOOT.BIN build/ps3_health.elf
           rm -f keys.toml
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: hdd_ssd_health.gnpdrm.pkg
-          path: hdd_ssd_health.gnpdrm.pkg
+          name: ps3_health.gnpdrm.pkg
+          path: ps3_health.gnpdrm.pkg
           if-no-files-found: error

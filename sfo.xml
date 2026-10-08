@@ -1,7 +1,7 @@
 <?xml version="1.0" ?>
 <sfo>
 	<value name="APP_VER" type="string">
-		01.30
+		02.00
 	</value>
 	<value name="ATTRIBUTE" type="integer">
 		0
@@ -28,12 +28,12 @@
 		279
 	</value>
 	<value name="TITLE" type="string">
-		HDD/SSD Health
+		PS3 Health
 	</value>
 	<value name="TITLE_ID" type="string">
 		HDSH00001
 	</value>
 	<value name="VERSION" type="string">
-		01.30
+		02.00
 	</value>
 </sfo>
