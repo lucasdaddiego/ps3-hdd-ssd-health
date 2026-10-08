@@ -402,7 +402,6 @@ s32 sysLv2FsMkdir(const char *path, s32 mode)
     if (mkdir(map(path, p, sizeof p), 0777) == 0) return 0;
     return errno == EEXIST ? (s32)0x80010014 : (s32)0x80010006;
 }
-s32 sysLv2FsRename(const char *a, const char *b) { char p[1024], q[1024]; return rename(map(a, p, sizeof p), map(b, q, sizeof q)) ? -1 : 0; }
 s32 sysLv2FsUnlink(const char *path) { char p[1024]; return unlink(map(path, p, sizeof p)) ? -1 : 0; }
 
 /* ---- network: offline ----------------------------------------------------- */

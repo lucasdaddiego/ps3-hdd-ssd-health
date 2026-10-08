@@ -7,7 +7,6 @@
 #include "smart.h"
 
 #define APP_DIR "/dev_hdd0/tmp/ps3_health"
-#define OLD_APP_DIR "/dev_hdd0/tmp/hdd_ssd_health"   /* 1.x: moved to APP_DIR at the first start */
 #define DEMO_DIR APP_DIR "/demo"
 
 /* Journal state of one named call. SKIPPED = declined at the first-run prompt,

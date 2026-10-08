@@ -605,7 +605,7 @@ int safe_load(void)
     if (n <= 0) return 0;
     t[n] = 0;
     if (sscanf(t, "%d %d %d %d", &l, &tp, &r, &b) != 4 || !safe_valid(l, tp, r, b))
-        return 0;                            /* also a file from an earlier build in 848x512 units: too small */
+        return 0;
     safe_l = l;
     safe_t = tp;
     safe_r = r;

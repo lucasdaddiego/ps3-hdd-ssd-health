@@ -32,8 +32,7 @@ the visible area of your TV, which you set once at the first start. At 720p
 the console scales the picture down and the text stays readable. At 480p or
 576p the text is small: the layouts are made for HD.
 
-Until 1.3.0 the app was "HDD/SSD Health", the Drive module alone. 2.0 installs
-over it (same title id) and moves its data to the new folder.
+Until 1.3.0 the app was "HDD/SSD Health", the Drive module alone.
 
 ## Screenshots
 
@@ -211,8 +210,7 @@ back). Both write only to memory the app allocated. CIRCLE stops a test.
 
 ### Files on the console
 
-In `/dev_hdd0/tmp/ps3_health/` (1.x used `hdd_ssd_health/`; 2.0 renames it at
-the first start):
+In `/dev_hdd0/tmp/ps3_health/`:
 - `report-YYYYMMDD-HHMMSS.txt` — one report per write (UTC time): the console
   line, then a section per module with a result. The drive serial number is
   masked (`AB******78`). The drive section ends with the compatibility text.

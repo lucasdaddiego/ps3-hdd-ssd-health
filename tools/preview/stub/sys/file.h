@@ -16,6 +16,5 @@ s32 sysLv2FsLSeek64(s32 fd, s64 off, s32 whence, u64 *pos);
 s32 sysLv2FsFsync(s32 fd);
 s32 sysLv2FsStat(const char *path, sysFSStat *st);
 s32 sysLv2FsMkdir(const char *path, s32 mode);
-s32 sysLv2FsRename(const char *from, const char *to);
 s32 sysLv2FsUnlink(const char *path);
 #endif

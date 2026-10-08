@@ -214,15 +214,6 @@ int fs_selftest(int *mkdir_rc, int *open_rc, int *write_rc)
 {
     s32 fd;
     u64 w = 0;
-    sysFSStat st;
-    if (sysLv2FsStat(APP_DIR, &st) && sysLv2FsStat(OLD_APP_DIR, &st) == 0 && sysLv2FsRename(OLD_APP_DIR, APP_DIR)) {
-        /* 1.x data: the journal, the reports, the demo sectors. When the rename
-         * fails, at least the journal comes along: it holds the frozen calls. */
-        static char jt[32768];
-        int n = fs_read_file(OLD_APP_DIR "/journal.txt", jt, sizeof jt);
-        sysLv2FsMkdir(APP_DIR, 0777);
-        if (n > 0) fs_write_file(JOURNAL, jt, (u64)n, 0);
-    }
     *mkdir_rc = sysLv2FsMkdir(APP_DIR, 0777);
     *write_rc = -1;
     *open_rc = sysLv2FsOpen(APP_DIR "/starts.txt", SYS_O_WRONLY | SYS_O_CREAT | SYS_O_APPEND, &fd, 0666, NULL, 0);
@@ -724,7 +715,7 @@ static int compat_field(const drive_state *d, const char *id, char *out, int n)
     return j;
 }
 
-/* The same four fields as text, for the report and the share page. */
+/* The same four fields as text, for the report and the QR code on Help. */
 int compat_body(const drive_state *d, char *out, int n)
 {
     static const char *ids[] = {"firmware", "drive", "result", "health"};
