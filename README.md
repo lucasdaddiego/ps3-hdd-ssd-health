@@ -37,21 +37,29 @@ over it (same title id) and moves its data to the new folder.
 
 ## Screenshots
 
-Photos of the TV on the test console (1.1.0, the Drive module). The drive
-serial number is covered. New photos of the 2.0 screens follow after the
-console test.
+The screens are rendered on a Mac from the app's own code at 1920 x 1080. The
+drive data comes from the author's SSD with the serial number masked. The
+temperatures, the sticks and the memory size are simulated.
 
 <table>
 <tr>
 <td><img src="docs/xmb.jpg" alt="The app in the XMB Game column"><br>The icon and the background as the XMB composes them (rendered from the pkg art).</td>
-<td><img src="docs/attributes.jpg" alt="Attributes page"><br>Drive, attributes page: the table with the change since the last report.</td>
+<td><img src="docs/home.png" alt="Home screen"><br>The home screen: what each module checks, and its last result.</td>
 </tr>
 <tr>
-<td><img src="docs/summary.jpg" alt="Summary page"><br>Drive, summary page.</td>
-<td><img src="docs/share.jpg" alt="QR code page"><br>The QR code and the text it carries (a 1.x photo: 2.0 shows it on the Help screen).</td>
+<td><img src="docs/attributes.png" alt="Drive, attributes page"><br>Drive, attributes page: the SMART table with the vendor's attribute names.</td>
+<td><img src="docs/summary.png" alt="Drive, summary page"><br>Drive, summary page.</td>
 </tr>
 <tr>
-<td><img src="docs/speed.jpg" alt="Speed test result"><br>The speed test result screen.</td>
+<td><img src="docs/cooling.png" alt="Cooling module"><br>Cooling: a 2-minute load test and its temperature curve.</td>
+<td><img src="docs/controller.png" alt="Controller module"><br>Controller: the sticks, every button with its pressure, the sensors.</td>
+</tr>
+<tr>
+<td><img src="docs/calibration.png" alt="Visible area screen"><br>The visible area of your TV, asked at the first start.</td>
+<td><img src="docs/memory.png" alt="Memory module"><br>Memory: the user memory test passed.</td>
+</tr>
+<tr>
+<td><img src="docs/help.png" alt="Help screen"><br>Help: the QR code that opens a prefilled GitHub issue, and a short guide.</td>
 <td></td>
 </tr>
 </table>
