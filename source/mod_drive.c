@@ -675,7 +675,7 @@ int mod_drive_open(void)
         memset(&D, 0, sizeof D);
         D.cpu_temp = D.rsx_temp = -1;
         ui_demo = 0;
-    }
+    } else help_keep();                      /* Help in a later session shows this result */
     return back;
 }
 

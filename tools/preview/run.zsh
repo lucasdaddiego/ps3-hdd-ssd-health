@@ -28,6 +28,10 @@ scn() {   # name script [VAR=value ...]; SAFE, STATE, JOURNAL, DEMO from the cal
     env PV_ROOT=$sbx PV_DRIVE=$DRIVE PV_OUT=$OUT PV_SCRIPT="$script" "$@" $P/build/pv 2>&1 | grep -v '^snap' | head -5
     print -- "$name: exit ${pipestatus[1]}"
 }
+again() {   # name script: the next session in the sandbox of the last scn of name, as that run left it
+    env PV_ROOT=$P/build/sbx/$1 PV_DRIVE=$DRIVE PV_OUT=$OUT PV_SCRIPT="$2" $P/build/pv 2>&1 | grep -v '^snap' | head -5
+    print -- "$1 again: exit ${pipestatus[1]}"
+}
 case ${1:-all} in
 first|all)
     SAFE= STATE= JOURNAL= scn first "3:SNAP=calib_first 4:SQUARE 8:SNAP=calib_single 9:CIRCLE 14:SNAP=home_empty 15:EXIT" ;|
@@ -78,6 +82,9 @@ reprobe|all)
 help|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= scn help "3:TRIANGLE 14:SNAP=help_empty 15:EXIT"
     SAFE='160 90 1760 990' STATE= JOURNAL= scn helpmin "3:SNAP=home_min 4:TRIANGLE 14:SNAP=help_min 15:EXIT" ;|
+helpkept|all)
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn helpkept "4:CROSS 12:CROSS 120:CIRCLE 130:EXIT"
+    again helpkept "3:TRIANGLE 14:SNAP=help_kept 15:EXIT" ;|
 esac
 ${PYTHON:-python3} -I - "$OUT" <<'PY'
 import glob, os, sys

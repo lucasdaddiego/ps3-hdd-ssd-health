@@ -217,6 +217,8 @@ the first start):
   line, then a section per module with a result. The drive serial number is
   masked (`AB******78`). The drive section ends with the compatibility text.
 - `state.txt` — the last result of each module, for the home screen.
+- `compat.txt` — the compatibility text of the last Drive result. Help shows
+  it until the Drive module runs in the session.
 - `safe_area.txt` — the visible area, in 1920 x 1080 units.
 - `net_url.txt` — optional, the `http://` URL for the download test.
 - `identify.bin`, `smart.bin`, `thresh.bin`, `selftest.bin`, `errlog.bin`,

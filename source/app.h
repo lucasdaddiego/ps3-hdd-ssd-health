@@ -33,6 +33,7 @@ extern int fs_mk, fs_op, fs_wr;    /* the file test return codes, for the home s
 
 int home_screen(int sel);          /* the module chosen, -1 to exit */
 int help_screen(void);             /* TRIANGLE on the home screen: the QR code and a short guide; 0 back, -1 exit */
+void help_keep(void);              /* the QR text of the drive result to APP_DIR/compat.txt, for Help in a later session */
 
 /* modules */
 extern drive_state D;

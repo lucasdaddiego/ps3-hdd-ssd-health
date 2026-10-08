@@ -17,10 +17,40 @@
 /* the QR code of the compat report, rebuilt when Help opens and the link changed */
 static uint8_t qr[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VERSION)];
 static int qr_ok, qr_side, qr_nruns;
+static int qr_kept;                          /* the text came from KEPT_FILE: Drive has not run in this session */
 static char qr_body[1024];
 static struct { uint8_t r, c, len; } qr_run[QR_SIDE * (QR_SIDE + 1) / 2];   /* the dark runs of each row */
 
 /* ---- QR ------------------------------------------------------------------- */
+
+#define KEPT_FILE APP_DIR "/compat.txt"
+
+/* The title and the body of the drive result of this moment, kept for Help
+ * in a later session: a title line, then the body. The Drive module calls it
+ * when it goes back home. */
+void help_keep(void)
+{
+    static char title_s[96], body[sizeof qr_body], t[sizeof title_s + sizeof body];
+    compat_title(&D, title_s, sizeof title_s);
+    compat_body(&D, body, sizeof body);
+    int n = snprintf(t, sizeof t, "%s\n%s", title_s, body);
+    fs_write_file(KEPT_FILE, t, n < (int)sizeof t ? n : (int)sizeof t - 1, 0);
+}
+
+/* The kept text into title_s and qr_body: 0, or -1 when there is none. */
+static int load_kept(char *title_s, int n)
+{
+    static char t[96 + sizeof qr_body];
+    int k = fs_read_file(KEPT_FILE, t, sizeof t - 1);
+    if (k <= 0) return -1;
+    t[k] = 0;
+    char *nl = strchr(t, '\n');
+    if (!nl) return -1;
+    *nl = 0;
+    snprintf(title_s, n, "%s", t);
+    snprintf(qr_body, sizeof qr_body, "%s", nl + 1);
+    return 0;
+}
 
 /* Encodes the link and keeps the code as runs of dark modules: the encode
  * (eight masks tried) and the module scan run once per new link, not per frame. */
@@ -29,8 +59,11 @@ static void build_qr(void)
     static uint8_t tmp[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VERSION)];
     static char url[2400], last_url[2400];
     char title_s[96];
-    compat_title(&D, title_s, sizeof title_s);
-    compat_body(&D, qr_body, sizeof qr_body);
+    qr_kept = !mod_drive_probed() && load_kept(title_s, sizeof title_s) == 0;
+    if (!qr_kept) {
+        compat_title(&D, title_s, sizeof title_s);
+        compat_body(&D, qr_body, sizeof qr_body);
+    }
     /* A blank issue with title and body: the issue form (template=...) takes
      * field values on the web, but the GitHub mobile app, which catches the
      * link on a phone, fills only title and body. */
@@ -85,7 +118,7 @@ int help_screen(void)
 {
     char msg[160] = "";
     u32 msg_color = WHITE;
-    build_qr();                              /* the drive data of this moment; no new encode for the same link */
+    build_qr();                              /* the drive data of this moment, else the kept text; no new encode for the same link */
     ui_module = "Help";
     while (1) {
         read_pad();
@@ -109,7 +142,8 @@ int help_screen(void)
                        "Scan with a phone: it opens a new GitHub issue with the text below. Nothing is sent until you "
                        "submit it. No serial number, no console id.") * step + 12;
         if (!mod_drive_probed()) {
-            text_fit(x, y, F_BODY, YELLOW, w, "%s", "The drive is not read yet: open Drive first, then come back.");
+            if (qr_kept) text_fit(x, y, F_BODY, GREY, w, "%s", "Drive data from an earlier session: open Drive to read it again.");
+            else text_fit(x, y, F_BODY, YELLOW, w, "%s", "The drive is not read yet: open Drive first, then come back.");
             y += step + 8;
         }
         float cy = BOTTOM - card_h, cx = MG + 32, cw = SW - 2 * MG - 64;   /* the card sits at the foot */
