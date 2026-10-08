@@ -393,6 +393,11 @@ commit hashes.
    `SIG_DA`, copied from PSL1GHT's `tools/geohot` (`keys.h`, `oddkeys.h`). See
    [NOTICE](NOTICE), item 6.
 
+`tools/preview/` compiles the app for the Mac against stub headers and renders
+its screens to PNG, with a drive emulated from a console's sector dumps: a
+check of layouts and text without a TV. It also makes the screenshots above
+(see its README).
+
 Toolchain findings that cost the most time:
 - **Apps built with PSL1GHT's 2021+ runtime do not start on HFW 4.93 + PS3HEN
   3.6.0.** They show a black screen and return to the XMB after about 10 s,
