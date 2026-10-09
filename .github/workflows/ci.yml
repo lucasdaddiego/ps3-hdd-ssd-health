@@ -32,8 +32,9 @@ jobs:
 
       - name: Python scripts compile, verify_self.py --help
         run: |
-          python3 -I -m py_compile verify_self.py art/make_art.py art/make_font.py
+          python3 -I -m py_compile verify_self.py tools/syscalls.py art/make_art.py art/make_font.py
           python3 -I verify_self.py --help > /dev/null
+          python3 -I tools/syscalls.py --selftest
           if PS3DEV_KEYS=/nonexistent python3 -I verify_self.py LICENSE 2> err.txt; then
             echo "verify_self.py accepted a non-SELF without a key file"; exit 1
           fi
@@ -68,6 +69,9 @@ jobs:
         run: |
           make pkg
           ls -la ps3_health.gnpdrm.pkg build/pkg/USRDIR/EBOOT.BIN
+
+      - name: Syscall audit of the ELF (never 602, 604 or 870; only tools/syscalls.allow)
+        run: python3 -I tools/syscalls.py build/ps3_health.elf
 
       - name: Verify the signed EBOOT against the ELF
         if: env.PS3DEV_KEYS_TOML != ''

@@ -15,5 +15,6 @@ $t/test_smart
 rm -r $t
 rm -f ps3_health.pkg ps3_health.gnpdrm.pkg
 make pkg
+${PYTHON:-python3} -I tools/syscalls.py build/ps3_health.elf
 ${PYTHON:-python3} -I verify_self.py build/pkg/USRDIR/EBOOT.BIN build/ps3_health.elf
 ls -la ps3_health.gnpdrm.pkg

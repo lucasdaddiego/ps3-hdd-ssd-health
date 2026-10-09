@@ -1,0 +1,55 @@
+# LV2 syscalls the ELF makes, one number per line (tools/syscalls.py checks the
+# ELF against this file; --write rewrites it from a known-good ELF and drops
+# these notes). Written on 2026-10-09 from the 2.0.1 tree: 45 numbers, 95 call
+# sites, cross-checked against ppu-objdump (every sc resolved).
+# The app's own calls are named in README.md (Safety, How it reaches the
+# drive): 383 temperatures, 409 fan duty, 600/601/609/616 the drive. The rest
+# is PSL1GHT's runtime: threads and time (44, 141, 142, 145, 146), memory
+# (330, 331, 337), the tty (402, 403), the network (700 to 714) and the file
+# system (801 to 834). Never 602, 604 or 870: the script refuses them whatever
+# this file says.
+44
+141
+142
+145
+146
+330
+331
+337
+383
+402
+403
+409
+600
+601
+609
+616
+700
+701
+702
+706
+707
+710
+712
+713
+714
+801
+802
+803
+804
+805
+806
+807
+808
+809
+810
+811
+812
+813
+814
+815
+818
+820
+831
+832
+834

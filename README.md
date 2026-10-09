@@ -266,7 +266,9 @@ The other system calls, all read-only and journaled like the drive calls:
 normal file calls, the Transfer module the normal socket calls, the Memory
 module its own allocations, the Display module the video state read. (Raw
 sector reads, syscall 602, and the console id, syscall 870, are refused on
-HEN: ENXIO and EPERM on the test console. The app does not call them.)
+HEN: ENXIO and EPERM on the test console. The app does not call them.) The
+build checks this: `tools/syscalls.py` scans the ELF for every syscall number
+and fails on 602, 604 or 870, or on a number outside `tools/syscalls.allow`.
 
 Sending ATA commands to the internal drive from a PS3 app was new ground. While
 we tested, one other method (syscall 604 with LV1 command 0x22) **froze the
@@ -391,7 +393,13 @@ nothing from the bundle's `portlibs/`: it draws through its own `source/gfx/`.
 1. runs the host unit test (`test/test_smart.c`: the decoders, the vendor table,
    the summary, the delta, the issue link and a QR encode) on the Mac;
 2. runs `make pkg`;
-3. runs `python3 -I verify_self.py`, which decrypts the signed EBOOT, compares
+3. runs `python3 -I tools/syscalls.py build/ps3_health.elf`: it lists the LV2
+   syscall numbers the ELF makes (each `li r11, N` before an `sc`) and fails
+   when one is not in `tools/syscalls.allow`, or when 602, 604 or 870 appears
+   (see Safety). A number that reaches r11 another way escapes the scan, so
+   this is a guard against a mistake, not a proof. `--write` rewrites the
+   allowlist from a known-good ELF;
+4. runs `python3 -I verify_self.py`, which decrypts the signed EBOOT, compares
    every segment with the ELF and recomputes each segment's HMAC-SHA1 and the
    ECDSA signature. The Sony key material it needs is not in this repository:
    the script reads it from `~/.local/share/ps3dev/keys.toml` (or `$PS3DEV_KEYS`),
@@ -421,8 +429,9 @@ Toolchain findings that cost the most time:
 ### CI and releases
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push: the host test of
-the decoder, a compile and `--help` smoke of the Python scripts, and a pkg build
-on Linux with the same `sdk_setup.sh` (the pkg is a workflow artifact). The
+the decoder, a compile and `--help` smoke of the Python scripts with the
+`syscalls.py` self-test, and a pkg build on Linux with the same `sdk_setup.sh`
+(the pkg is a workflow artifact) followed by the syscall audit of its ELF. The
 signed EBOOT is verified in CI only when the repository secret `PS3DEV_KEYS_TOML`
 holds the key file. A `v*` tag (`.github/workflows/release.yml`) builds the pkg
 and attaches `PS3-Health-<tag>.pkg` and `SHA256SUMS` to a draft release.
