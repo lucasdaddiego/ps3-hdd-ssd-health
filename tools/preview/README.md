@@ -1,10 +1,11 @@
 # Preview on the host
 
 The app's own sources compile for the Mac (or Linux) against stub PSL1GHT
-headers, and run in a small simulated world: the app's renderer
+headers, and run in a small simulated world (`stubs.c`): the app's renderer
 (`source/gfx/gfx.c`) on a software back end, a scripted controller, 1/60 s per
-frame, the `/dev_*` paths inside a sandbox folder, and an emulated drive that
-answers syscall 616 from a console's sector dumps. It renders chosen frames to
+frame, the `/dev_*` paths inside a sandbox folder, and, in the app's own part
+(`pv_app.c`), an emulated drive that answers syscall 616 from a console's
+sector dumps, the temperatures and the fan duty. It renders chosen frames to
 PNG. It is a check of layouts and text, not of the console: the RSX timing, the
 real file speeds and the network are not simulated.
 

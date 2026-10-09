@@ -1,6 +1,7 @@
 #!/bin/zsh
-# Build build/pv: the app's own sources for the host, against the stubs, with
-# the real source/gfx/gfx.c on the preview's back end (gfx_soft.c).
+# Build build/pv: the app's own sources for the host, against the stubs (the
+# world in stubs.c, the app's part in pv_app.c), with the real source/gfx/gfx.c
+# on the preview's back end (gfx_soft.c).
 #   PV_CFLAGS='-DGFX_VTX_BYTES=8192' zsh build.zsh    (extra flags, e.g. a small vertex area)
 set -e
 P=${0:A:h}
@@ -20,6 +21,6 @@ CC=(cc -O2 -std=gnu11 -Wall -Wno-unused-variable -Wno-unused-parameter -Wno-inco
 # gfx.c's API as gfx_real_*: gfx_trace.c wraps it (PV_GFXTRACE)
 $CC -Dgfx_init=gfx_real_init -Dgfx_viewport=gfx_real_viewport -Dgfx_begin=gfx_real_begin -Dgfx_texture=gfx_real_texture \
     -Dgfx_prim=gfx_real_prim -Dgfx_end=gfx_real_end -c "$R/source/gfx/gfx.c" -o "$P/build/gfx.o"
-$CC -o "$P/build/pv" "$R"/source/*.c "$P/stubs.c" "$P/gfx_soft.c" "$P/gfx_trace.c" "$P/raster.c" "$P/build/fonts_bin.c" \
+$CC -o "$P/build/pv" "$R"/source/*.c "$P/stubs.c" "$P/pv_app.c" "$P/gfx_soft.c" "$P/gfx_trace.c" "$P/raster.c" "$P/build/fonts_bin.c" \
     "$P/build/gfx.o" -lm -lpthread
 print "built ${P#$R/}/build/pv"

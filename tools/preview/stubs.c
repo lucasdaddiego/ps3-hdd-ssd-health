@@ -1,12 +1,14 @@
-/* Host stubs for the PS3 Health preview. The app's own sources compile on the
- * Mac against stub headers; this file gives them a world:
+/* The host world of the preview, for every app on the frame. The app's own
+ * sources compile on the Mac against stub headers; this file gives them a
+ * world:
  *   - the video output (PV_RES) and the end of each frame (pv_flip), for
  *     gfx_soft.c, the preview's back end of the app's renderer;
  *   - the pad: a script of frames and buttons (PV_SCRIPT);
  *   - time: 1/60 s per flip;
  *   - files: /dev_* paths inside a sandbox (PV_ROOT);
- *   - syscalls 600/601/609/616/383/409: an emulated drive that answers from the
- *     console's sector dumps (PV_DRIVE), temperatures, a fan duty.
+ *   - the network, offline, and the LV2 syscalls, refused: both weak, so that
+ *     an app's own file replaces them (Health: pv_app.c, the drive from a
+ *     console's sector dumps, 383 and 409).
  * Snapshots: "frame:SNAP=name" writes PV_OUT/name.ppm. README.md lists the
  * other PV_* variables. */
 #include <stdio.h>
@@ -256,100 +258,33 @@ s32 sysLv2FsMkdir(const char *path, s32 mode)
 }
 s32 sysLv2FsUnlink(const char *path) { char p[1024]; return unlink(map(path, p, sizeof p)) ? -1 : 0; }
 
-/* ---- network: offline ----------------------------------------------------- */
+/* ---- network: offline, weak: an app's own file can replace it ------------ */
 
-s32 netInitialize(void) { return 0; }
-s32 netDeinitialize(void) { return 0; }
-s32 netSocket(s32 d, s32 t, s32 p) { (void)d; (void)t; (void)p; return -1; }
-s32 netConnect(s32 s, const struct sockaddr *a, socklen_t l) { (void)s; (void)a; (void)l; return -1; }
-s32 netClose(s32 s) { (void)s; return 0; }
-s32 netBind(s32 s, const struct sockaddr *a, socklen_t l) { (void)s; (void)a; (void)l; return -1; }
-s32 netListen(s32 s, s32 b) { (void)s; (void)b; return -1; }
-s32 netAccept(s32 s, const struct sockaddr *a, socklen_t *l) { (void)s; (void)a; (void)l; return -1; }
-s32 netSetSockOpt(s32 s, s32 lv, s32 o, const void *v, socklen_t l) { (void)s; (void)lv; (void)o; (void)v; (void)l; return 0; }
-ssize_t netSend(s32 s, const void *b, size_t l, s32 f) { (void)s; (void)b; (void)l; (void)f; return -1; }
-ssize_t netRecv(s32 s, void *b, size_t l, s32 f) { (void)s; (void)b; (void)l; (void)f; return -1; }
-struct net_hostent *netGetHostByName(const char *n) { (void)n; return NULL; }
-s32 netCtlInit(void) { return 0; }
-void netCtlTerm(void) {}
-s32 netCtlGetInfo(s32 code, union net_ctl_info *i) { (void)code; snprintf(i->ip_address, sizeof i->ip_address, "192.168.1.20"); return 0; }
+__attribute__((weak)) s32 netInitialize(void) { return 0; }
+__attribute__((weak)) s32 netDeinitialize(void) { return 0; }
+__attribute__((weak)) s32 netSocket(s32 d, s32 t, s32 p) { (void)d; (void)t; (void)p; return -1; }
+__attribute__((weak)) s32 netConnect(s32 s, const struct sockaddr *a, socklen_t l) { (void)s; (void)a; (void)l; return -1; }
+__attribute__((weak)) s32 netClose(s32 s) { (void)s; return 0; }
+__attribute__((weak)) s32 netBind(s32 s, const struct sockaddr *a, socklen_t l) { (void)s; (void)a; (void)l; return -1; }
+__attribute__((weak)) s32 netListen(s32 s, s32 b) { (void)s; (void)b; return -1; }
+__attribute__((weak)) s32 netAccept(s32 s, const struct sockaddr *a, socklen_t *l) { (void)s; (void)a; (void)l; return -1; }
+__attribute__((weak)) s32 netSetSockOpt(s32 s, s32 lv, s32 o, const void *v, socklen_t l) { (void)s; (void)lv; (void)o; (void)v; (void)l; return 0; }
+__attribute__((weak)) ssize_t netSend(s32 s, const void *b, size_t l, s32 f) { (void)s; (void)b; (void)l; (void)f; return -1; }
+__attribute__((weak)) ssize_t netRecv(s32 s, void *b, size_t l, s32 f) { (void)s; (void)b; (void)l; (void)f; return -1; }
+__attribute__((weak)) struct net_hostent *netGetHostByName(const char *n) { (void)n; return NULL; }
+__attribute__((weak)) s32 netCtlInit(void) { return 0; }
+__attribute__((weak)) void netCtlTerm(void) {}
+__attribute__((weak)) s32 netCtlGetInfo(s32 code, union net_ctl_info *i) { (void)code; snprintf(i->ip_address, sizeof i->ip_address, "192.168.1.20"); return 0; }
 s32 sysModuleLoad(u32 id) { (void)id; return 0; }
 in_addr_t inet_addr(const char *cp) { unsigned a, b, c, d; return sscanf(cp, "%u.%u.%u.%u", &a, &b, &c, &d) == 4 ? (a << 24 | b << 16 | c << 8 | d) : (in_addr_t)-1; }
 
-/* ---- syscalls: the emulated drive ----------------------------------------- */
+/* ---- syscalls: refused ---------------------------------------------------- */
 
-typedef struct __attribute__((packed)) {
-    u16 features, sector_count, lba_low, lba_mid, lba_high;
-    u8 device, command;
-    u32 is_ext, proto, in_out, size, pad;
-    u64 buffer;
-    u32 arglen, pad2;
-} ata_block;
-
-static int load(const char *name, u8 *out)
+/* Every LV2 syscall the app makes lands here (stub/ppu-lv2.h). This default
+ * refuses them all, so an app with no syscalls still links; an app's own file
+ * defines the strong one (Health: pv_app.c, the drive, 383 and 409). */
+__attribute__((weak)) u64 pv_syscall(int n, u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g)
 {
-    char p[1024];
-    snprintf(p, sizeof p, "%s/%s", getenv("PV_DRIVE") ? getenv("PV_DRIVE") : ".", name);
-    FILE *f = fopen(p, "rb");
-    if (!f) return -1;
-    size_t n = fread(out, 1, 512, f);
-    fclose(f);
-    return n == 512 ? 0 : -1;
-}
-
-static u64 ata(ata_block *b, u8 *out)
-{
-    switch (b->command) {
-    case 0xEC: return load("identify.bin", out) ? 0x80010003 : 0;
-    case 0xB0:
-        if (b->features == 0xD0) {
-            if (load("smart.bin", out)) return 0x80010003;
-            if (getenv("PV_ST")) out[363] = (u8)strtol(getenv("PV_ST"), NULL, 16);
-            return 0;
-        }
-        if (b->features == 0xD1) return load("thresh.bin", out) ? 0x80010003 : 0;
-        if (b->features == 0xD5 && b->lba_low == 6) return load("selftest.bin", out) ? 0x80010003 : 0;
-        if (b->features == 0xD5 && b->lba_low == 1) return load("errlog.bin", out) ? 0x80010003 : 0;
-        if (b->features == 0xD4) return 0;
-        return 0x80010003;
-    case 0x2F:
-        if (b->lba_low == 4 && b->lba_mid == 0) { memset(out, 0, 512); out[0] = 1; out[8] = 1; out[9] = 1; return 0; }
-        if (b->lba_low == 4 && b->lba_mid == 1) return load("devstat.bin", out) ? 0x80010003 : 0;
-        if (b->lba_low == 0x11) return load("phy.bin", out) ? 0x80010003 : 0;
-        return 0x80010003;
-    }
-    return 0x80010003;
-}
-
-u64 pv_syscall(int n, u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g)
-{
-    (void)d; (void)f; (void)g;
-    switch (n) {
-    case 600: *(u32 *)(uintptr_t)c = 1; return 0;
-    case 601: return 0;
-    case 609: {
-        u8 *info = (u8 *)(uintptr_t)b;
-        u64 sectors = 2000409264ull;
-        u32 ss = 512;
-        memcpy(info + 0x28, &sectors, 8);
-        memcpy(info + 0x30, &ss, 4);
-        return 0;
-    }
-    case 616: return ata((ata_block *)(uintptr_t)c, (u8 *)(uintptr_t)e);
-    case 383: {
-        if (getenv("PV_383_RC")) return (s32)strtoul(getenv("PV_383_RC"), NULL, 16);   /* a refused call */
-        double t = (sim_us - 1000000) / 1e6;
-        int rise = getenv("PV_RISE") ? (int)(20 * (1 - exp(-t / 70))) : 0;
-        int off = getenv("PV_TEMP_OFF") ? atoi(getenv("PV_TEMP_OFF")) : 0;            /* readings off the 30..90 C graph */
-        *(u32 *)(uintptr_t)b = (u32)((a ? 55 + rise : 51 + rise) + off) << 24;
-        return 0;
-    }
-    case 409:
-        *(u8 *)(uintptr_t)b = 0;
-        *(u8 *)(uintptr_t)c = 1;
-        *(u8 *)(uintptr_t)d = getenv("PV_RISE") ? (u8)(0x55 + (sim_us / 1000000) / 3) : 0x55;
-        *(u8 *)(uintptr_t)e = 0;
-        return 0;
-    }
-    return 0x80010003;
+    (void)n; (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g;
+    return 0x80010003;                       /* not supported */
 }
