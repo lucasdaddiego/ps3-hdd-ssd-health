@@ -228,7 +228,7 @@ In `/dev_hdd0/tmp/ps3_health/`:
   "since last" column. A different model gives no delta.
 - `journal.txt` — the freeze journal (below).
 - `gfx_init.txt` — written only when the app cannot start its picture: the
-  number of the renderer's init step that failed (`gfx_be_init` in
+  number of the renderer's init step that failed (`gfx_be_init` in ps3gfx's
   `source/gfx/gfx_rsx.c`). The app then goes back to the XMB.
 - `demo/` — put `identify.bin`, `smart.bin` and, if you have them, `thresh.bin`
   and `selftest.bin` here for demo mode. This is how a dump from an issue is
@@ -349,18 +349,21 @@ its own bounce buffer.
 
 ## Code layout
 
-`source/ui.c` is the frame: a 1920 x 1080 space shifted into the visible area,
-a text renderer that draws each glyph from an atlas as one quad (pixel exact
-at 1080p), a small drawing kit, the pad, the blocking call in a second thread
-with a counter, and the first-run prompt. `data/fonts.bin`
-holds the five Inter atlases (art/make_font.py; tabular digits for tables and
-counters). `home.c` is the home screen and `state.txt`, `help.c` the Help
-screen with the QR code. `report.c` writes the report and the USB copy. One
-`mod_*.c` per module behind the `module` struct in `app.h`. `ata.c` and
-`smart.c` are the drive access and the decoders. `source/gfx/` is the app's own
-renderer, about 500 lines that write the RSX command words themselves (no
-librsx): its README.md has the frame model, the memory layout, the source of
-each word and the recipe for the shader words.
+The frame the app draws in is [ps3gfx](https://github.com/lucasdaddiego/ps3gfx),
+PS3 Health 2.0.1's own code moved into a library: the renderer (about 500
+lines that write the RSX command words themselves, no librsx), the text (Inter
+atlases, one quad per glyph, pixel exact at 1080p, tabular digits for tables
+and counters), the drawing kit, the pad, the blocking call in a second thread
+with a counter, the first-run prompt, the visible-area screen, the freeze
+journal and the file helpers. The app links `libps3gfx.a` and includes
+`<ps3gfx/ui.h>`, `<ps3gfx/gfx.h>`, `<ps3gfx/journal.h>` and `<ps3gfx/fs.h>`;
+the library's README has the API by header, and its `source/gfx/README.md` the
+frame model, the memory layout, the source of each RSX word and the recipe for
+the shader words. What stays here: `main.c` and `app.h` (the modules behind
+the `module` struct), `home.c` (the home screen and `state.txt`), `help.c`
+(the Help screen with the QR code), `report.c` (the report and the USB copy),
+one `mod_*.c` per module, `ata.c` and `smart.c` (the drive access and the
+decoders), the vendor table, the compatibility text and the QR encoder.
 
 ## Build
 
@@ -378,18 +381,23 @@ each word and the recipe for the shader words.
   builds the pkg, and only the check is missing.
 
 ```zsh
-./sdk_setup.sh   # once: ~/ps3dev = ps3dev bundle + PSL1GHT 2020 runtime (about 20 s)
+./sdk_setup.sh   # once: ~/ps3dev = ps3dev bundle + PSL1GHT 2020 runtime + ps3gfx at its pin (about 20 s)
 ./build.sh       # → ps3_health.gnpdrm.pkg
 python3 art/make_art.py <Inter[opsz,wght].ttf>          # only to redraw ICON0/PIC1 and docs/icon.png
-python3 art/make_font.py <Inter[opsz,wght].ttf> [preview.png]   # only to regenerate data/fonts.bin
 ```
 
 `sdk_setup.sh` downloads the prebuilt ps3dev bundle `nightly-2026-07-26` for the
 host (`ps3dev-macos-ARM64`, `ps3dev-macos-X64` or `ps3dev-linux-X64`, SHA-256
 checked) with `curl` if `~/ps3dev` is missing. Then it builds PSL1GHT `6e565a7`
-(2020-11-25, `ppu/` only) into it, pinned to its full commit hash. The app uses
-nothing from the bundle's `portlibs/`: it draws through its own `source/gfx/`.
-`build.sh`:
+(2020-11-25, `ppu/` only) into it, pinned to its full commit hash. Then it
+clones ps3gfx into `~/ps3dev/src/ps3gfx` at the commit `PS3GFX_REV` pins (the
+full id, in the script) and runs its `make install`, which puts `libps3gfx.a`,
+the `<ps3gfx/*.h>` headers, `OFL.txt` and a `COMMIT` stamp into the bundle's
+`portlibs/ppu`: the only thing the app uses from there. One `~/ps3dev` serves
+every app on the library and the last install wins, so `build.sh` first checks
+that the archive is there and that its `COMMIT` equals the pin (`PS3GFX_DEV=1`
+skips the stamp check, for a build against a working clone installed by hand).
+Then `build.sh`:
 1. runs the host unit test (`test/test_smart.c`: the decoders, the vendor table,
    the summary, the delta, the issue link and a QR encode) on the Mac;
 2. runs `make pkg`;
@@ -407,8 +415,10 @@ nothing from the bundle's `portlibs/`: it draws through its own `source/gfx/`.
    `SIG_DA`, copied from PSL1GHT's `tools/geohot` (`keys.h`, `oddkeys.h`). See
    [NOTICE](NOTICE), item 5.
 
-`tools/preview/` compiles the app for the Mac against stub headers and renders
-its screens to PNG, with a drive emulated from a console's sector dumps: a
+`tools/preview/build.zsh` hands the app to ps3gfx's preview (the clone in
+`~/ps3dev/src/ps3gfx`, or `$PS3GFX`), which compiles it for the Mac against
+stub headers and renders its screens to PNG; `tools/preview/pv_app.c` is the
+app's part of that world, a drive emulated from a console's sector dumps: a
 check of layouts and text without a TV. It also makes the screenshots above
 (see its README).
 
@@ -446,9 +456,11 @@ and attaches `PS3-Health-<tag>.pkg` and `SHA256SUMS` to a draft release.
   syscall table and for how libgcm and the RSX read the renderer's words.
 - The QR code is made by Project Nayuki's
   [QR Code generator library](https://www.nayuki.io/page/qr-code-generator-library) (MIT).
-- The on-screen text and the icon's words use [Inter](https://github.com/rsms/inter)
-  (SIL Open Font License): bitmap atlases made by `art/make_font.py`, and the
-  icon and background drawn by `art/make_art.py`.
+- [ps3gfx](https://github.com/lucasdaddiego/ps3gfx) (MIT): the renderer, the
+  text and the app frame, PS3 Health 2.0.1's own code as a library.
+- The on-screen text (through ps3gfx) and the icon's words use [Inter](https://github.com/rsms/inter)
+  (SIL Open Font License): bitmap atlases made by ps3gfx's `art/make_font.py`,
+  and the icon and background drawn by `art/make_art.py`.
 
 ## License
 

@@ -7,7 +7,7 @@
 #include <io/pad.h>
 #include <lv2/systime.h>
 #include "app.h"
-#include "ui.h"
+#include <ps3gfx/ui.h>
 #include "report.h"
 
 static int tested;                       /* a rest test ran */

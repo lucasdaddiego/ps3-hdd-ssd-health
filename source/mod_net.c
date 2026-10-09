@@ -17,7 +17,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "app.h"
-#include "ui.h"
+#include <ps3gfx/ui.h>
 #include "report.h"
 
 #define DEFAULT_URL "http://speed.cloudflare.com/__down?bytes=50000000"

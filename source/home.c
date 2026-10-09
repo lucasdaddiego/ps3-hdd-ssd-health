@@ -5,7 +5,7 @@
 #include <time.h>
 #include <sys/systime.h>
 #include "app.h"
-#include "ui.h"
+#include <ps3gfx/ui.h>
 #include "report.h"
 
 #define STATE_FILE APP_DIR "/state.txt"

@@ -18,8 +18,8 @@
 #include <sys/file.h>
 #include <sys/systime.h>
 #include "ata.h"
-#include "fs.h"
-#include "journal.h"
+#include <ps3gfx/fs.h>
+#include <ps3gfx/journal.h>
 #include "vendor.h"
 #include "version.h"
 #include "report.h"

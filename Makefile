@@ -17,11 +17,9 @@ include $(PSL1GHT)/ppu_rules
 #---------------------------------------------------------------------------------
 TARGET		:=	ps3_health
 BUILD		:=	build
-# source/gfx is the renderer (its README.md). A base name in source/gfx/ must
-# not also exist in source/: VPATH puts all objects in one build/ folder.
-SOURCES		:=	source source/gfx
-DATA		:=	data
-INCLUDES	:=	source/gfx
+SOURCES		:=	source
+DATA		:=
+INCLUDES	:=
 PKGFILES	:=	$(CURDIR)/pkgfiles
 SFOXML		:=	$(CURDIR)/sfo.xml
 
@@ -39,15 +37,15 @@ CXXFLAGS	=	$(CFLAGS)
 LDFLAGS		=	$(MACHDEP) -Wl,-Map,$(notdir $@).map
 
 #---------------------------------------------------------------------------------
-# any extra libraries we wish to link with the project
+# any extra libraries we wish to link with the project: ps3gfx first, GNU ld resolves left to right
 #---------------------------------------------------------------------------------
-LIBS	:=	-lgcm_sys -lio -lm -lsysutil -lnet -lnetctl -lsysmodule
+LIBS	:=	-lps3gfx -lgcm_sys -lio -lm -lsysutil -lnet -lnetctl -lsysmodule
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
-# include and lib. Empty: the app uses nothing from $(PORTLIBS).
+# include and lib: ps3gfx, installed there by sdk_setup.sh
 #---------------------------------------------------------------------------------
-LIBDIRS	:=
+LIBDIRS	:=	$(PSL1GHT)/portlibs/ppu
 
 #---------------------------------------------------------------------------------
 # no real need to edit anything past this point unless you need to add additional
@@ -146,9 +144,6 @@ $(OUTPUT).self: $(OUTPUT).elf
 	@$(SPRX) $(BUILDDIR)/$(notdir $<)
 	@touch $@
 $(OUTPUT).elf:	$(OFILES)
-
-# ui.c includes fonts_bin.h, which the bin2o rule writes next to fonts.bin.o
-ui.o: fonts.bin.o
 
 #---------------------------------------------------------------------------------
 # This rule links in binary data with the .bin extension

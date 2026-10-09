@@ -1,26 +1,13 @@
 #!/bin/zsh
-# Build build/pv: the app's own sources for the host, against the stubs (the
-# world in stubs.c, the app's part in pv_app.c), with the real source/gfx/gfx.c
-# on the preview's back end (gfx_soft.c).
-#   PV_CFLAGS='-DGFX_VTX_BYTES=8192' zsh build.zsh    (extra flags, e.g. a small vertex area)
-set -e
-P=${0:A:h}
-R=${P:h:h}
-mkdir -p $P/build
-python3 -I - "$R/data/fonts.bin" "$P/build/fonts_bin.c" <<'PY'
-import sys
-d = open(sys.argv[1], 'rb').read()
-with open(sys.argv[2], 'w') as f:
-    f.write('#include "ppu-types.h"\nconst u8 fonts_bin[] __attribute__((aligned(64))) = {\n')
-    for i in range(0, len(d), 24):
-        f.write(','.join(str(b) for b in d[i:i + 24]) + ',\n')
-    f.write('};\nconst u8 fonts_bin_end[1];\nconst u32 fonts_bin_size = %d;\n' % len(d))
-PY
-CC=(cc -O2 -std=gnu11 -Wall -Wno-unused-variable -Wno-unused-parameter -Wno-incompatible-pointer-types-discards-qualifiers -Wno-macro-redefined
-    -I"$P/stub" -I"$R/source" -I"$R/source/gfx" ${=PV_CFLAGS:-})
-# gfx.c's API as gfx_real_*: gfx_trace.c wraps it (PV_GFXTRACE)
-$CC -Dgfx_init=gfx_real_init -Dgfx_viewport=gfx_real_viewport -Dgfx_begin=gfx_real_begin -Dgfx_texture=gfx_real_texture \
-    -Dgfx_prim=gfx_real_prim -Dgfx_end=gfx_real_end -c "$R/source/gfx/gfx.c" -o "$P/build/gfx.o"
-$CC -o "$P/build/pv" "$R"/source/*.c "$P/stubs.c" "$P/pv_app.c" "$P/gfx_soft.c" "$P/gfx_trace.c" "$P/raster.c" "$P/build/fonts_bin.c" \
-    "$P/build/gfx.o" -lm -lpthread
-print "built ${P#$R/}/build/pv"
+# Build build/pv through ps3gfx's preview: the library's tools/preview/build.zsh
+# compiles this app's source/ and tools/preview/pv_app.c (the drive, 383, 409)
+# with the library's own sources, against its stub headers. The checkout is
+# $PS3GFX, else $PS3DEV/src/ps3gfx, the clone sdk_setup.sh makes at the pinned
+# commit; a checkout at another commit is announced, since the pkg links the pin.
+#   PV_CFLAGS='-DGFX_VTX_BYTES=8192' zsh build.zsh    (extra flags, passed through)
+L=${PS3GFX:-${PS3DEV:-$HOME/ps3dev}/src/ps3gfx}
+[[ -f $L/tools/preview/build.zsh ]] || { print -u2 "no ps3gfx checkout in $L: run ./sdk_setup.sh, or set PS3GFX"; exit 1 }
+rev=$(sed -n 's/^PS3GFX_REV=\([0-9a-f]*\).*/\1/p' ${0:A:h:h:h}/sdk_setup.sh)
+head=$(git -C $L rev-parse HEAD 2>/dev/null); head=${head:-unknown}
+[[ $head == $rev ]] || print "preview on ps3gfx ${head[1,7]}, the pkg links ${rev[1,7]}"
+exec zsh $L/tools/preview/build.zsh APP=${0:A:h:h:h}

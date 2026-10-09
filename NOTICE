@@ -1,7 +1,9 @@
 PS3 Health — third-party notices
 
-The app's own code is under the MIT License (LICENSE). The release pkg also
-contains compiled code and data from the projects below.
+The app's own code, and ps3gfx, the library it draws through
+(https://github.com/lucasdaddiego/ps3gfx, the same author), are under the MIT
+License (LICENSE). The release pkg also contains compiled code and data from
+the projects below.
 
 1. PSL1GHT runtime and libraries (crt, librt, liblv2, librsx, the sprx stubs),
    https://github.com/ps3dev/PSL1GHT, commit 6e565a7. MIT License:
@@ -26,8 +28,9 @@ contains compiled code and data from the projects below.
    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
    THE SOFTWARE.
 
-2. The on-screen fonts (data/fonts.bin) are bitmaps that art/make_font.py
-   renders from Inter, Copyright (c) 2016 The Inter Project Authors
+2. The on-screen fonts come through ps3gfx: bitmaps (its data/fonts.bin, a
+   member of the archive the pkg links) that its art/make_font.py renders from
+   Inter, Copyright (c) 2016 The Inter Project Authors
    (https://github.com/rsms/inter), SIL Open Font License 1.1. As a modified
    version of that font they stay under the OFL; the license text ships in the
    pkg as USRDIR/OFL.txt (pkgfiles/USRDIR/OFL.txt here).

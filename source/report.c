@@ -10,7 +10,7 @@
 #include <sys/systime.h>
 #include "app.h"
 #include "report.h"
-#include "ui.h"
+#include <ps3gfx/ui.h>
 #include "version.h"
 
 static char paths[2][128];                   /* this session's report, then its demo report */

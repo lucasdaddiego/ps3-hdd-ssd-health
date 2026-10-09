@@ -2,8 +2,9 @@
 # Make $PS3DEV (default ~/ps3dev) an SDK whose apps start on this console:
 # the ps3dev nightly-2026-07-26 bundle (host tools, ppu-gcc 7.2) with PSL1GHT's
 # 2020 runtime (6e565a7), pinned to a full commit hash: a newer PSL1GHT runtime
-# does not start on this console. The app uses nothing from the bundle's
-# portlibs/: it draws through its own source/gfx/.
+# does not start on this console. Then ps3gfx, the renderer and the frame the
+# app draws through, at the commit PS3GFX_REV pins, installed into the bundle's
+# portlibs/ppu: the only thing the app uses from there.
 # Needs: zsh, curl, git, make, shasum (macOS arm64/x86_64 or Linux x86_64).
 #
 # Apps linked with the bundle's own runtime (PSL1GHT 2021+) die before main on
@@ -42,3 +43,15 @@ make -C $t/psl1ght/ppu install --no-print-directory > /dev/null
 rm -rf $t
 print "PSL1GHT 6e565a7, $(date -u +%F)" > $PS3DEV/.runtime-2020
 print "$PS3DEV: runtime PSL1GHT 6e565a7 (2020)"
+
+# ps3gfx, the library the app draws through (github.com/lucasdaddiego/ps3gfx):
+# a clone at the pinned commit, kept in $PS3DEV/src so that the host preview
+# builds against the same sources, then its make install into portlibs/ppu (the
+# archive, the <ps3gfx/*.h> headers, OFL.txt and the COMMIT stamp that build.sh
+# checks). This script is sourced in the console loop: no $0, return not exit.
+PS3GFX_REV=7afb1c6a65abeeb2804e7fb5d6d8d3f6a7c1e9db   # ps3gfx main, 2026-10-09; v0.1.0 after the console round
+src=$PS3DEV/src/ps3gfx; rm -rf $src
+git clone -q https://github.com/lucasdaddiego/ps3gfx $src && git -C $src checkout -q $PS3GFX_REV
+[[ $(git -C $src rev-parse HEAD) == $PS3GFX_REV ]] || { print -u2 "ps3gfx is not at $PS3GFX_REV"; return 1 }
+make --no-print-directory -C $src install > /dev/null
+print "$PS3DEV: ps3gfx ${PS3GFX_REV[1,7]} in portlibs/ppu"

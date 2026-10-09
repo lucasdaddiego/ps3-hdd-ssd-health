@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "app.h"
-#include "ui.h"
+#include <ps3gfx/ui.h>
 #include "report.h"
 #include "version.h"
 

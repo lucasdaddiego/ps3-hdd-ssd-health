@@ -6,7 +6,7 @@
 #include <string.h>
 #include <ppu-lv2.h>
 #include <lv2/systime.h>
-#include "ui.h"
+#include <ps3gfx/ui.h>
 #include "app.h"
 #include "report.h"
 #include "vendor.h"

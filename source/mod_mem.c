@@ -1,15 +1,15 @@
 /* The Memory module: pattern tests on the user memory (XDR) the app can get,
  * and on the RSX memory (GDDR3) through its mapping. The app writes only to
- * memory it allocated itself. RSX memory comes from gfx_vram (source/gfx), a
+ * memory it allocated itself. RSX memory comes from gfx_vram (ps3gfx), a
  * bump pointer over the local memory that gives nothing back: the blocks
  * stay with the app until it exits, and a second test reuses them. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include "gfx.h"
+#include <ps3gfx/gfx.h>
 #include "app.h"
-#include "ui.h"
+#include <ps3gfx/ui.h>
 #include "report.h"
 
 #define BLOCK (1024 * 1024)

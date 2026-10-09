@@ -8,7 +8,7 @@
 #include <lv2/systime.h>
 #include <sys/thread.h>
 #include "app.h"
-#include "ui.h"
+#include <ps3gfx/ui.h>
 #include "report.h"
 
 #define MAX_SAMPLES 400                      /* every 2 s: 13 min */

@@ -32,7 +32,7 @@ jobs:
 
       - name: Python scripts compile, verify_self.py --help
         run: |
-          python3 -I -m py_compile verify_self.py tools/syscalls.py art/make_art.py art/make_font.py
+          python3 -I -m py_compile verify_self.py tools/syscalls.py art/make_art.py
           python3 -I verify_self.py --help > /dev/null
           python3 -I tools/syscalls.py --selftest
           if PS3DEV_KEYS=/nonexistent python3 -I verify_self.py LICENSE 2> err.txt; then

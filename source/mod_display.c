@@ -6,7 +6,7 @@
 #include <sysutil/video.h>
 #include <lv2/systime.h>
 #include "app.h"
-#include "ui.h"
+#include <ps3gfx/ui.h>
 #include "report.h"
 
 static videoState vs;

@@ -5,7 +5,7 @@
 #include <string.h>
 #include <stdint.h>
 #include "app.h"
-#include "ui.h"
+#include <ps3gfx/ui.h>
 #include "report.h"
 #include "compat.h"
 #include "version.h"
