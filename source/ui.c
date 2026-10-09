@@ -17,6 +17,7 @@
 #include "ui.h"
 #include "fonts_bin.h"
 #include "ata.h"
+#include "fs.h"
 #include "version.h"
 
 #define PI_F 3.14159265f

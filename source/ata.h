@@ -52,9 +52,6 @@ typedef struct {
     double speed_mb, speed_wsec, speed_rsec;
 } drive_state;
 
-int fs_selftest(int *mkdir_rc, int *open_rc, int *write_rc);
-int fs_write_file(const char *path, const void *data, uint64_t len, int append);   /* 0, or the LV2 rc (-1: short write) */
-int fs_read_file(const char *path, void *data, int n);       /* bytes read, -1 when missing */
 int usb_find(char *dir, int n);                              /* the first /dev_usb00N: 0, or -1 when none */
 void drive_load_prev(drive_state *d);
 void console_info(drive_state *d);

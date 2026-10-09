@@ -3,6 +3,7 @@
 #define APP_H
 
 #include "ata.h"
+#include "fs.h"
 
 /* A module: a tile on the home screen and its own screens. open() returns 0
  * to go back home, -1 to exit the app. report() appends its section with
