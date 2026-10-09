@@ -28,8 +28,9 @@ d[511] = (-sum(d[:511])) % 256               # word 255: the 512 bytes sum to 0
 open(p, 'wb').write(d)
 PY
 J=$'done error_log rc=0x00000000 ok=1\ndone gpl_devstat rc=0x00000000 ok=1\ndone gpl_phy rc=0x00000000 ok=1\ndone fan_policy rc=0x00000000 ok=1\n'
-# the tiles of the home shot: results from the test console (2.0.0), the hours as in the dumps
-ST=$'drive|1|2026-10-08|Dahua V800 2.5 inch SATA 1TB SSD|Health OK, 934 h (38 d)\ncooling|1|2026-10-08|Cell 51>67 C, RSX 55>71 C|fan 33>49%, 2:00 load\npad|1|2026-10-08|Drift L 0.8%, R 0.8%|Circle L 100%, R 100%\ndisplay|1|2026-10-08|1920x1080p 16:9|Visible area 1920 x 1080\ntransfer|1|2026-10-08|USB 3/14 MB/s|net 33, LAN 79 Mbit/s\nmemory|1|2026-10-08|XDR 194 MB: 0 errors|RSX 222 MB: 0 errors\n'
+# the tiles of the home shot: results from the test console (2.0.0; the RSX memory
+# test from 2.0.1), the hours as in the dumps
+ST=$'drive|1|2026-10-08|Dahua V800 2.5 inch SATA 1TB SSD|Health OK, 934 h (38 d)\ncooling|1|2026-10-08|Cell 51>67 C, RSX 55>71 C|fan 33>49%, 2:00 load\npad|1|2026-10-08|Drift L 0.8%, R 0.8%|Circle L 100%, R 100%\ndisplay|1|2026-10-08|1920x1080p 16:9|Visible area 1920 x 1080\ntransfer|1|2026-10-08|USB 3/14 MB/s|net 33, LAN 79 Mbit/s\nmemory|1|2026-10-08|XDR 194 MB: 0 errors|RSX 231 MB: 0 errors\n'
 shot() {   # name script [VAR=value ...]; AREA, JOURNAL, STATE from the caller
     local name=$1 script=$2
     shift 2
