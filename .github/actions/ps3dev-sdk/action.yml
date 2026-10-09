@@ -1,7 +1,7 @@
 name: ps3dev SDK
 description: >-
-  The ps3dev nightly-2026-07-26 Linux bundle with PSL1GHT's 2020 runtime and
-  tiny3D, built by sdk_setup.sh into ~/ps3dev (cached on the script's hash).
+  The ps3dev nightly-2026-07-26 Linux bundle with PSL1GHT's 2020 runtime,
+  built by sdk_setup.sh into ~/ps3dev (cached on the script's hash).
 runs:
   using: composite
   steps:
@@ -16,7 +16,7 @@ runs:
         path: ~/ps3dev
         key: ps3dev-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('sdk_setup.sh') }}
 
-    - name: Build the SDK (bundle download, PSL1GHT 2020 runtime, tiny3D)
+    - name: Build the SDK (bundle download, PSL1GHT 2020 runtime)
       if: steps.sdk-cache.outputs.cache-hit != 'true'
       shell: bash
       run: ./sdk_setup.sh

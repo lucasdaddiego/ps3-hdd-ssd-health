@@ -17,9 +17,11 @@ include $(PSL1GHT)/ppu_rules
 #---------------------------------------------------------------------------------
 TARGET		:=	ps3_health
 BUILD		:=	build
-SOURCES		:=	source
+# source/gfx is the renderer (its README.md). A base name in source/gfx/ must
+# not also exist in source/: VPATH puts all objects in one build/ folder.
+SOURCES		:=	source source/gfx
 DATA		:=	data
-INCLUDES	:=	include
+INCLUDES	:=	source/gfx
 PKGFILES	:=	$(CURDIR)/pkgfiles
 SFOXML		:=	$(CURDIR)/sfo.xml
 
@@ -39,13 +41,13 @@ LDFLAGS		=	$(MACHDEP) -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS	:=	-ltiny3d -lgcm_sys -lio -lm -lsysutil -lrsx -lnet -lnetctl -lsysmodule
+LIBS	:=	-lgcm_sys -lio -lm -lsysutil -lnet -lnetctl -lsysmodule
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
-# include and lib
+# include and lib. Empty: the app uses nothing from $(PORTLIBS).
 #---------------------------------------------------------------------------------
-LIBDIRS	:= $(PORTLIBS)
+LIBDIRS	:=
 
 #---------------------------------------------------------------------------------
 # no real need to edit anything past this point unless you need to add additional
@@ -98,8 +100,7 @@ export OFILES	:=	$(addsuffix .o,$(BINFILES)) \
 #---------------------------------------------------------------------------------
 # build a list of include paths
 #---------------------------------------------------------------------------------
-export INCLUDE	:=	-I$(PORTLIBS)/include/freetype2 \
-			$(foreach dir,$(INCLUDES), -I$(CURDIR)/$(dir)) \
+export INCLUDE	:=	$(foreach dir,$(INCLUDES), -I$(CURDIR)/$(dir)) \
 					$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
 					$(LIBPSL1GHT_INC) \
 					-I$(CURDIR)/$(BUILD)

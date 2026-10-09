@@ -1,13 +1,13 @@
 /* The Memory module: pattern tests on the user memory (XDR) the app can get,
  * and on the RSX memory (GDDR3) through its mapping. The app writes only to
- * memory it allocated itself. RSX memory comes from tiny3d's allocator, a
+ * memory it allocated itself. RSX memory comes from gfx_vram (source/gfx), a
  * bump pointer over the local memory that gives nothing back: the blocks
  * stay with the app until it exits, and a second test reuses them. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <tiny3d.h>
+#include "gfx.h"
 #include "app.h"
 #include "ui.h"
 #include "report.h"
@@ -122,7 +122,7 @@ static void job_vram(void)
     progress("Taking the free RSX memory in 1 MB blocks (kept until the app exits)");
     if (vn < 0) {
         vn = 0;
-        while (vn < MAX_BLOCKS && (vblk[vn] = tiny3d_AllocTexture(BLOCK)) != NULL) vn++;
+        while (vn < MAX_BLOCKS && (vblk[vn] = gfx_vram(BLOCK, 128, NULL)) != NULL) vn++;
     }
     memcpy(blk, vblk, sizeof blk);
     vram.blocks = vn;

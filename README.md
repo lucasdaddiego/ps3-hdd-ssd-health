@@ -154,7 +154,7 @@ The Cell and RSX temperatures (syscall 383) and the fan duty (syscall 409,
 `sys_sm_get_fan_policy`, the read half of what webMAN uses; behind a first-run
 prompt; the module stays closed when the app cannot write its journal). CROSS
 runs a 2-minute load test, TRIANGLE a 5-minute one: two PPU
-threads at full load and the RSX drawing 80 full-screen layers per frame,
+threads at full load and the RSX drawing 160 full-screen layers per frame,
 the temperatures every 2 s on a curve, then the peak values and the fan
 response. CIRCLE stops the test early and keeps the curve.
 
@@ -226,6 +226,9 @@ In `/dev_hdd0/tmp/ps3_health/`:
 - `smart.when` — the time and the model of the last `smart.bin`, for the
   "since last" column. A different model gives no delta.
 - `journal.txt` — the freeze journal (below).
+- `gfx_init.txt` — written only when the app cannot start its picture: the
+  number of the renderer's init step that failed (`gfx_be_init` in
+  `source/gfx/gfx_rsx.c`). The app then goes back to the XMB.
 - `demo/` — put `identify.bin`, `smart.bin` and, if you have them, `thresh.bin`
   and `selftest.bin` here for demo mode. This is how a dump from an issue is
   reproduced, and how the Drive screenshots are taken.
@@ -343,16 +346,18 @@ its own bounce buffer.
 
 ## Code layout
 
-`source/ui.c` is the frame: tiny3d in a 1920 x 1080 space shifted into the
-visible area, a text renderer that draws each string from a glyph atlas in one
-call (libfont3d is not used: it maps only 95 % of each glyph texture, so its
-text is never pixel exact), a small drawing kit, the pad, the blocking call in
-a second thread with a counter, and the first-run prompt. `data/fonts.bin`
+`source/ui.c` is the frame: a 1920 x 1080 space shifted into the visible area,
+a text renderer that draws each glyph from an atlas as one quad (pixel exact
+at 1080p), a small drawing kit, the pad, the blocking call in a second thread
+with a counter, and the first-run prompt. `data/fonts.bin`
 holds the five Inter atlases (art/make_font.py; tabular digits for tables and
 counters). `home.c` is the home screen and `state.txt`, `help.c` the Help
 screen with the QR code. `report.c` writes the report and the USB copy. One
 `mod_*.c` per module behind the `module` struct in `app.h`. `ata.c` and
-`smart.c` are the drive access and the decoders.
+`smart.c` are the drive access and the decoders. `source/gfx/` is the app's own
+renderer, about 500 lines that write the RSX command words themselves (no
+librsx): its README.md has the frame model, the memory layout, the source of
+each word and the recipe for the shader words.
 
 ## Build
 
@@ -379,8 +384,8 @@ python3 art/make_font.py <Inter[opsz,wght].ttf> [preview.png]   # only to regene
 `sdk_setup.sh` downloads the prebuilt ps3dev bundle `nightly-2026-07-26` for the
 host (`ps3dev-macos-ARM64`, `ps3dev-macos-X64` or `ps3dev-linux-X64`, SHA-256
 checked) with `curl` if `~/ps3dev` is missing. Then it builds PSL1GHT `6e565a7`
-(2020-11-25, `ppu/` only) and tiny3D `9b02ae6` into it, both pinned to full
-commit hashes.
+(2020-11-25, `ppu/` only) into it, pinned to its full commit hash. The app uses
+nothing from the bundle's `portlibs/`: it draws through its own `source/gfx/`.
 `build.sh`:
 1. runs the host unit test (`test/test_smart.c`: the decoders, the vendor table,
    the summary, the delta, the issue link and a QR encode) on the Mac;
@@ -391,7 +396,7 @@ commit hashes.
    the script reads it from `~/.local/share/ps3dev/keys.toml` (or `$PS3DEV_KEYS`),
    seven hex strings named `KEYPAIR_E`, `ERK`, `RIV`, `SIG_R`, `SIG_N`, `SIG_K`,
    `SIG_DA`, copied from PSL1GHT's `tools/geohot` (`keys.h`, `oddkeys.h`). See
-   [NOTICE](NOTICE), item 6.
+   [NOTICE](NOTICE), item 5.
 
 `tools/preview/` compiles the app for the Mac against stub headers and renders
 its screens to PNG, with a drive emulated from a console's sector dumps: a
@@ -425,11 +430,10 @@ and attaches `PS3-Health-<tag>.pkg` and `SHA256SUMS` to a draft release.
 
 - [PSL1GHT](https://github.com/ps3dev/PSL1GHT) and the
   [ps3dev](https://github.com/ps3dev/ps3dev) toolchain (MIT).
-- [tiny3D](https://github.com/wargio/tiny3D) by Hermes, under the PSL1GHT license.
 - [GamePad Test](https://github.com/ErikPshat/GamePad-Test) by Zar, the model for
-  the tiny3d UI.
+  the first UI.
 - The Linux kernel's `ps3disk.c` for the LV1 ATA block, and RPCS3 for the LV2
-  syscall table.
+  syscall table and for how libgcm and the RSX read the renderer's words.
 - The QR code is made by Project Nayuki's
   [QR Code generator library](https://www.nayuki.io/page/qr-code-generator-library) (MIT).
 - The on-screen text and the icon's words use [Inter](https://github.com/rsms/inter)

@@ -1,9 +1,7 @@
 /* Host stubs for the PS3 Health preview. The app's own sources compile on the
  * Mac against stub headers; this file gives them a world:
- *   - tiny3d: the primitives go to raster.c, a software RSX (each triangle
- *     once, the top-left fill rule, colour x A4R4G4B4 texel, the alpha test,
- *     source-alpha blending in 8-bit math, an 8-bit XRGB buffer), and the
- *     textures to the free RSX memory that the console has;
+ *   - the video output (PV_RES) and the end of each frame (pv_flip), for
+ *     gfx_soft.c, the preview's back end of the app's renderer;
  *   - the pad: a script of frames and buttons (PV_SCRIPT);
  *   - time: 1/60 s per flip;
  *   - files: /dev_* paths inside a sandbox (PV_ROOT);
@@ -20,7 +18,6 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <pthread.h>
-#include "tiny3d.h"
 #include "io/pad.h"
 #include "sysutil/sysutil.h"
 #include "sysutil/video.h"
@@ -34,9 +31,9 @@
 #include "sysmodule/sysmodule.h"
 #include "ppu-lv2.h"
 #include "raster.h"
+#include "pv.h"
 
-videoResolution Video_Resolution = {1920, 1080};
-static float vpx, vpy, vsx = 1, vsy = 1;
+static videoResolution res = {1920, 1080};
 static int frame, drawing;
 static u64 sim_us = 1000000;
 
@@ -105,110 +102,17 @@ static unsigned buttons_now(int *spin)
     return b;
 }
 
-/* ---- tiny3d --------------------------------------------------------------- */
+/* ---- frames --------------------------------------------------------------- */
 
-/* RSX local memory: tiny3d_AllocTexture gets what tiny3D leaves free on the
- * console. That is the 249 MB of gcmGetConfiguration less what tiny3d_Init
- * takes first, in its order and alignment (rsxutil.c, tiny3d.c): two colour
- * buffers, the depth buffer (at least 1920 x 1088), two 256-byte fragment
- * programs and the 1 MB vertex buffer. So the RSX memory test counts what the
- * console counts: 222 MB at 1080p, 230 at 720p, 235 at 480p. */
-#define RSX_LOCAL 0x0F900000u
-static u8 *arena;                            /* the free RSX memory, from local offset rsx_base */
-static u32 rsx_base, rsx_next;
-
-static u32 align_up(u32 p, u32 a) { return (p + a - 1) & ~(a - 1); }
-
-static void rsx_layout(u32 w, u32 h)
+void pv_start(void)
 {
-    u32 pitch = 4 * ((w + 15) / 16 * 16), zpitch = 4 * (w > 1920 ? (w + 15) / 16 * 16 : 1920);
-    u32 zrows = h > 1088 ? (h + 15) / 16 * 16 : 1088, p = 0;
-    p = align_up(p, 64) + pitch * h;         /* the colour buffers */
-    p = align_up(p, 64) + pitch * h;
-    p = align_up(p, 64) + zpitch * zrows;    /* the depth buffer */
-    p = align_up(p, 256) + 256;              /* the fragment programs */
-    p = align_up(p, 256) + 256;
-    p = align_up(p, 64) + 1024 * 1024;       /* the vertex buffer */
-    rsx_base = rsx_next = p;
-    arena = calloc(1, RSX_LOCAL - p);
-}
-
-_Static_assert(TINY3D_TRIANGLES == RASTER_TRIANGLES && TINY3D_TRIANGLE_STRIP == RASTER_TRIANGLE_STRIP &&
-               TINY3D_TRIANGLE_FAN == RASTER_TRIANGLE_FAN && TINY3D_QUADS == RASTER_QUADS, "the primitive types pass through");
-
-static raster_tex tex;
-static raster_vtx vb[400000], cur;
-static int nv, ptype, ptex, pending;
-static u32 ccol = 0xffffffff;
-static float cu, cv;
-
-int tiny3d_Init(u32 size)
-{
-    (void)size;
     const char *r = getenv("PV_RES");
-    if (r && !strcmp(r, "720")) { Video_Resolution.width = 1280; Video_Resolution.height = 720; }
-    if (r && !strcmp(r, "480")) { Video_Resolution.width = 720; Video_Resolution.height = 480; }
-    rsx_layout(Video_Resolution.width, Video_Resolution.height);
-    raster_init(Video_Resolution.width, Video_Resolution.height);
+    if (r && !strcmp(r, "720")) { res.width = 1280; res.height = 720; }
+    if (r && !strcmp(r, "480")) { res.width = 720; res.height = 480; }
     script_load();
-    return 0;
-}
-void tiny3d_Project2D(void) {}
-void *tiny3d_AllocTexture(u32 size)
-{
-    u32 p = align_up(rsx_next, 128);
-    if (size > RSX_LOCAL - p) return NULL;
-    rsx_next = p + size;
-    return arena + (p - rsx_base);
-}
-u32 tiny3d_TextureOffset(void *p) { return (u32)((u8 *)p - arena); }
-void tiny3d_SetTextureWrap(int unit, u32 offset, u32 w, u32 h, u32 stride, int fmt, int wu, int wv, int filter)
-{
-    (void)unit; (void)fmt; (void)wu; (void)wv;
-    tex.texels = arena + offset; tex.w = w; tex.h = h; tex.stride = stride; tex.linear = filter != TEXTURE_NEAREST;
-}
-void tiny3d_UserViewport(int on, float px, float py, float sx, float sy, float a, float b)
-{
-    (void)a; (void)b;
-    if (!on) { vpx = vpy = 0; vsx = vsy = 1; return; }
-    vpx = px; vpy = py; vsx = sx; vsy = sy;
-}
-void tiny3d_AlphaTest(int e, u8 r, int f) { (void)e; (void)r; (void)f; }
-void tiny3d_BlendFunc(int e, int s, int d, int f) { (void)e; (void)s; (void)d; (void)f; }
-
-static void push(void)
-{
-    if (!pending || nv >= (int)(sizeof vb / sizeof vb[0])) return;
-    cur.rgba = ccol;
-    cur.u = cu;
-    cur.v = cv;
-    vb[nv++] = cur;
-    pending = 0;
 }
 
-int tiny3d_SetPolygon(int type) { ptype = type; nv = 0; ptex = 0; pending = 0; return 0; }
-void tiny3d_VertexPos(float x, float y, float z) { (void)z; push(); cur.x = x * vsx + vpx; cur.y = y * vsy + vpy; pending = 1; }
-void tiny3d_VertexColor(u32 c) { ccol = c; }
-void tiny3d_VertexTexture(float u, float v) { cu = u; cv = v; ptex = 1; }
-
-/* PV_VSTAT: tiny3d's vertex memory per frame (16 B position, 4 B colour,
- * 8 B texture per vertex, each polygon padded to 64 B; 1 MB per frame). */
-static long vbytes, vmax, polys, pmax, vmax_frame;
-static void vstat_exit(void) { if (getenv("PV_VSTAT")) fprintf(stderr, "vstat: max %ld bytes (%ld polygons) per frame, at frame %ld\n", vmax, pmax, vmax_frame); }
-void tiny3d_End(void)
-{
-    push();
-    vbytes = (vbytes + nv * (20 + (ptex ? 8 : 0)) + 63) & ~63L;
-    polys++;
-    if (drawing) raster_draw(ptype, vb, nv, ptex ? &tex : NULL);
-    nv = 0;
-}
-
-void tiny3d_Clear(u32 color, int flags)
-{
-    (void)flags;
-    if (drawing) raster_clear(color);
-}
+int pv_drawing(void) { return drawing; }
 
 static void snap(const char *name)
 {
@@ -216,7 +120,7 @@ static void snap(const char *name)
     snprintf(p, sizeof p, "%s/%s.ppm", getenv("PV_OUT") ? getenv("PV_OUT") : ".", name);
     FILE *f = fopen(p, "wb");
     if (!f) return;
-    int W = Video_Resolution.width, H = Video_Resolution.height;
+    int W = res.width, H = res.height;
     fprintf(f, "P6\n%d %d\n255\n", W, H);
     for (int y = 0; y < H; y++)
         for (int x = 0; x < W; x++) {
@@ -229,7 +133,7 @@ static void snap(const char *name)
     fprintf(stderr, "snap %s at frame %d\n", name, frame);
 }
 
-void tiny3d_Flip(void)
+void pv_flip(void)
 {
     int quit_now = 0;
     for (int i = 0; i < nev; i++) {
@@ -237,10 +141,6 @@ void tiny3d_Flip(void)
         if (ev[i].snap[0]) snap(ev[i].snap);
         if (ev[i].exit_) quit_now = 1;
     }
-    static int vstat_on;
-    if (!vstat_on) { vstat_on = 1; atexit(vstat_exit); }
-    if (vbytes > vmax) { vmax = vbytes; pmax = polys; vmax_frame = frame; }
-    vbytes = polys = 0;
     frame++;
     drawing = render_on();
     sim_us += 16667;
@@ -313,13 +213,13 @@ s32 videoGetState(s32 o, s32 d, videoState *s)
     memset(s, 0, sizeof *s);
     s->state = 1;
     s->colorSpace = 1;
-    s->displayMode.resolution = Video_Resolution.height == 1080 ? VIDEO_RESOLUTION_1080 : Video_Resolution.height == 720 ? VIDEO_RESOLUTION_720 : VIDEO_RESOLUTION_480;
+    s->displayMode.resolution = res.height == 1080 ? VIDEO_RESOLUTION_1080 : res.height == 720 ? VIDEO_RESOLUTION_720 : VIDEO_RESOLUTION_480;
     s->displayMode.scanMode = VIDEO_SCANMODE_PROGRESSIVE;
     s->displayMode.aspect = VIDEO_ASPECT_16_9;
     s->displayMode.refreshRates = 1 | 4;
     return 0;
 }
-s32 videoGetResolution(s32 id, videoResolution *r) { (void)id; *r = Video_Resolution; return 0; }
+s32 videoGetResolution(s32 id, videoResolution *r) { (void)id; *r = res; return 0; }
 
 /* ---- files ---------------------------------------------------------------- */
 
@@ -453,7 +353,3 @@ u64 pv_syscall(int n, u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g)
     }
     return 0x80010003;
 }
-
-#include "rsx/gcm_sys.h"
-static gcmControlRegister ctrl_reg;     /* the stub draws synchronously: GET is always PUT */
-gcmControlRegister *gcmGetControlRegister(void) { return &ctrl_reg; }

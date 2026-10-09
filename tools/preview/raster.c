@@ -8,7 +8,7 @@
  *     or a left edge (the top-left fill rule): two triangles that share an
  *     edge never cover a pixel twice;
  *   - the colour interpolates across the triangle, times the texel when a
- *     texture is bound (tiny3D's two fragment programs);
+ *     texture is bound (gfx's two fragment programs);
  *   - the alpha test GEQUAL 16/255, then source-alpha blending in 8-bit math
  *     into the 8-bit XRGB buffer: dst = (src * a + dst * (255 - a) + 127) / 255.
  * Model choices, not console facts: positions snap to 1/256 pixel, pixel

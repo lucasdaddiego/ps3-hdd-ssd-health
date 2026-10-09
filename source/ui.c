@@ -1,27 +1,24 @@
-/* The frame: tiny3d in 2D mode, a 1920x1080 space drawn 1:1 at 1080p into the
+/* The frame: gfx (source/gfx), a 1920x1080 space drawn 1:1 at 1080p into the
  * visible area of the TV, and text from Inter bitmap atlases (data/fonts.bin,
- * made by art/make_font.py), one draw call per string. libfont3d is not used:
- * it maps only 95 % of each glyph texture and clamps sizes to 8 px or more, so
- * its text is never pixel exact. */
+ * made by art/make_font.py), one quad per glyph, so every glyph pixel is
+ * exact at 1080p. */
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <ppu-lv2.h>
+#include <sys/file.h>
 #include <io/pad.h>
 #include <sysutil/sysutil.h>
 #include <lv2/systime.h>
-#include <sys/systime.h>
 #include <sys/thread.h>
-#include <tiny3d.h>
-#include <rsx/gcm_sys.h>
+#include "gfx.h"
 #include "ui.h"
 #include "fonts_bin.h"
 #include "ata.h"
 #include "version.h"
 
-#define Z 65535
 #define PI_F 3.14159265f
 
 volatile int quit;
@@ -46,12 +43,12 @@ static void sys_callback(u64 status, u64 param, void *usrdata)
 typedef struct {
     int cw, ch, base, pad, asc, line, aw, ah;
     unsigned char adv[112];
-    u32 offset;                              /* the atlas in RSX memory */
+    gfx_tex tex;                             /* the atlas in RSX memory */
 } font_t;
 
 static font_t fonts[F_COUNT];
 static int font_first = 32, font_count = 106, font_cols = 16;
-static int text_filter = TEXTURE_LINEAR;
+static int text_linear = 1;
 
 static unsigned rd16(const u8 *p) { return (unsigned)p[0] << 8 | p[1]; }
 static const u8 *align4(const u8 *p) { return p + (4 - (p - fonts_bin) % 4) % 4; }
@@ -81,15 +78,18 @@ static int fonts_init(void)
         memcpy(f->adv, p, font_count);
         p = align4(p + font_count);
         int npx = f->aw * f->ah;
-        u16 *tex = tiny3d_AllocTexture(npx * 2);
-        if (!tex) return -1;
+        u16 *t = gfx_vram(npx * 2, 128, &f->tex.offset);
+        if (!t) return -1;
         for (int i = 0; i < npx; i += 2) {
             unsigned a0 = p[i / 2] >> 4, a1 = p[i / 2] & 15;
-            tex[i] = a0 ? (u16)(a0 << 12 | 0x0fff) : 0;
-            tex[i + 1] = a1 ? (u16)(a1 << 12 | 0x0fff) : 0;
+            t[i] = a0 ? (u16)(a0 << 12 | 0x0fff) : 0;
+            t[i + 1] = a1 ? (u16)(a1 << 12 | 0x0fff) : 0;
         }
         p = align4(p + npx / 2);
-        f->offset = tiny3d_TextureOffset(tex);
+        f->tex.w = f->aw;
+        f->tex.h = f->ah;
+        f->tex.pitch = f->aw * 2;
+        f->tex.linear = text_linear;
     }
     return 0;
 }
@@ -115,37 +115,27 @@ int text_w(int font, const char *s) { return width_n(font, s, (int)strlen(s)); }
 int line_h(int font) { return fonts[font & 0xff].line; }
 int base_dy(int big, int small) { return fonts[big & 0xff].asc - fonts[small & 0xff].asc; }
 
-/* n characters as one textured quad list; each cell lands on whole pixels. */
+/* n characters, one quad each from the font's atlas, which is bound once per
+ * run; each cell lands on whole pixels. */
 static float run(float x, float y, int font, u32 color, const char *s, int n)
 {
     const font_t *f = &fonts[font & 0xff];
     float px = floorf(x + 0.5f), top = floorf(y + 0.5f) + f->asc - f->base;
     float du = (float)f->cw / f->aw, dv = (float)f->ch / f->ah;
-    int open = 0;
+    gfx_texture(&f->tex);
     for (int i = 0; i < n; i++) {
         int k = glyph(font, s[i]);
         if (s[i] != ' ') {
             float u = (k % font_cols) * du, v = (k / font_cols) * dv;
             float x0 = px - f->pad, x1 = x0 + f->cw, y1 = top + f->ch;
-            if (!open) {
-                tiny3d_SetTextureWrap(0, f->offset, f->aw, f->ah, f->aw * 2, TINY3D_TEX_FORMAT_A4R4G4B4, TEXTWRAP_CLAMP,
-                                      TEXTWRAP_CLAMP, text_filter);
-                tiny3d_SetPolygon(TINY3D_QUADS);
-            }
-            tiny3d_VertexPos(x0, top, Z);
-            if (!open) tiny3d_VertexColor(color);
-            tiny3d_VertexTexture(u, v);
-            tiny3d_VertexPos(x1, top, Z);
-            tiny3d_VertexTexture(u + du, v);
-            tiny3d_VertexPos(x1, y1, Z);
-            tiny3d_VertexTexture(u + du, v + dv);
-            tiny3d_VertexPos(x0, y1, Z);
-            tiny3d_VertexTexture(u, v + dv);
-            open = 1;
+            gfx_vtx *q = gfx_prim(GFX_QUADS, 4);
+            q = gfx_put(q, x0, top, color, u, v);
+            q = gfx_put(q, x1, top, color, u + du, v);
+            q = gfx_put(q, x1, y1, color, u + du, v + dv);
+            gfx_put(q, x0, y1, color, u, v + dv);
         }
         px += f->adv[k];
     }
-    if (open) tiny3d_End();
     return px;
 }
 
@@ -217,26 +207,26 @@ int text_wrap(float x, float y, int font, u32 color, float maxw, int maxlines, c
 
 /* ---- drawing kit ---------------------------------------------------------- */
 
-/* A batch: many quads of one colour in one polygon. tiny3d gives every
- * polygon its own draw call and 64-byte aligned vertex block, out of 1 MB of
- * vertex memory per frame, so a QR code or a curve goes through one batch. */
-static int batch_n;
+/* A shape: n vertices of one primitive, colour only. */
+static gfx_vtx *shape(int type, int n)
+{
+    gfx_texture(NULL);
+    return gfx_prim(type, n);
+}
+
+/* A batch: many quads of one colour. gfx joins consecutive quads into one
+ * draw, so batch_end has nothing left to do. */
 static u32 batch_c;
 
-void batch_begin(u32 c)
-{
-    batch_c = c;
-    batch_n = 0;
-}
+void batch_begin(u32 c) { batch_c = c; }
 
 static void batch_quad(float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3)
 {
-    if (!batch_n++) tiny3d_SetPolygon(TINY3D_QUADS);
-    tiny3d_VertexPos(x0, y0, Z);
-    if (batch_n == 1) tiny3d_VertexColor(batch_c);     /* the colour carries over to the next vertices */
-    tiny3d_VertexPos(x1, y1, Z);
-    tiny3d_VertexPos(x2, y2, Z);
-    tiny3d_VertexPos(x3, y3, Z);
+    gfx_vtx *q = shape(GFX_QUADS, 4);
+    q = gfx_put(q, x0, y0, batch_c, 0, 0);
+    q = gfx_put(q, x1, y1, batch_c, 0, 0);
+    q = gfx_put(q, x2, y2, batch_c, 0, 0);
+    gfx_put(q, x3, y3, batch_c, 0, 0);
 }
 
 void batch_rect(float x, float y, float w, float h) { batch_quad(x, y, x + w, y, x + w, y + h, x, y + h); }
@@ -249,11 +239,7 @@ void batch_line(float x0, float y0, float x1, float y1, float w)
     batch_quad(x0 + nx, y0 + ny, x1 + nx, y1 + ny, x1 - nx, y1 - ny, x0 - nx, y0 - ny);
 }
 
-void batch_end(void)
-{
-    if (batch_n) tiny3d_End();
-    batch_n = 0;
-}
+void batch_end(void) {}
 
 void rect(float x, float y, float w, float h, u32 c)
 {
@@ -264,16 +250,11 @@ void rect(float x, float y, float w, float h, u32 c)
 
 void rect_v(float x, float y, float w, float h, u32 top, u32 bottom)
 {
-    tiny3d_SetPolygon(TINY3D_QUADS);
-    tiny3d_VertexPos(x, y, Z);
-    tiny3d_VertexColor(top);
-    tiny3d_VertexPos(x + w, y, Z);
-    tiny3d_VertexColor(top);
-    tiny3d_VertexPos(x + w, y + h, Z);
-    tiny3d_VertexColor(bottom);
-    tiny3d_VertexPos(x, y + h, Z);
-    tiny3d_VertexColor(bottom);
-    tiny3d_End();
+    gfx_vtx *q = shape(GFX_QUADS, 4);
+    q = gfx_put(q, x, y, top, 0, 0);
+    q = gfx_put(q, x + w, y, top, 0, 0);
+    q = gfx_put(q, x + w, y + h, bottom, 0, 0);
+    gfx_put(q, x, y + h, bottom, 0, 0);
 }
 
 void frame(float x, float y, float w, float h, float t, u32 c)
@@ -321,15 +302,12 @@ void round_frame(float x, float y, float w, float h, float r, float t, u32 c)
     int seg = r < 8 ? 4 : 8;
     int n = round_pts(x, y, w, h, r, seg, o);
     round_pts(x + t, y + t, w - 2 * t, h - 2 * t, r - t, seg, in);
-    tiny3d_SetPolygon(TINY3D_TRIANGLE_STRIP);
+    gfx_vtx *q = shape(GFX_TRIANGLE_STRIP, 2 * (n + 1));
     for (int k = 0; k <= n; k++) {
         int i = k % n;
-        tiny3d_VertexPos(o[i * 2], o[i * 2 + 1], Z);
-        tiny3d_VertexColor(c);
-        tiny3d_VertexPos(in[i * 2], in[i * 2 + 1], Z);
-        tiny3d_VertexColor(c);
+        q = gfx_put(q, o[i * 2], o[i * 2 + 1], c, 0, 0);
+        q = gfx_put(q, in[i * 2], in[i * 2 + 1], c, 0, 0);
     }
-    tiny3d_End();
 }
 
 void line(float x0, float y0, float x1, float y1, float w, u32 c)
@@ -342,15 +320,12 @@ void line(float x0, float y0, float x1, float y1, float w, u32 c)
 void ring(float cx, float cy, float r, float w, u32 c)
 {
     float ro = r + w / 2, ri = r - w / 2;
-    tiny3d_SetPolygon(TINY3D_TRIANGLE_STRIP);
+    gfx_vtx *q = shape(GFX_TRIANGLE_STRIP, 2 * 49);
     for (int k = 0; k <= 48; k++) {
         float a = k * 2 * PI_F / 48, ca = cosf(a), sa = sinf(a);
-        tiny3d_VertexPos(cx + ca * ro, cy + sa * ro, Z);
-        tiny3d_VertexColor(c);
-        tiny3d_VertexPos(cx + ca * ri, cy + sa * ri, Z);
-        tiny3d_VertexColor(c);
+        q = gfx_put(q, cx + ca * ro, cy + sa * ro, c, 0, 0);
+        q = gfx_put(q, cx + ca * ri, cy + sa * ri, c, 0, 0);
     }
-    tiny3d_End();
 }
 
 void disc(float cx, float cy, float r, u32 c)
@@ -365,26 +340,17 @@ void disc(float cx, float cy, float r, u32 c)
 
 void tri(float x0, float y0, float x1, float y1, float x2, float y2, u32 c)
 {
-    tiny3d_SetPolygon(TINY3D_TRIANGLES);
-    tiny3d_VertexPos(x0, y0, Z);
-    tiny3d_VertexColor(c);
-    tiny3d_VertexPos(x1, y1, Z);
-    tiny3d_VertexColor(c);
-    tiny3d_VertexPos(x2, y2, Z);
-    tiny3d_VertexColor(c);
-    tiny3d_End();
+    gfx_vtx *q = shape(GFX_TRIANGLES, 3);
+    q = gfx_put(q, x0, y0, c, 0, 0);
+    q = gfx_put(q, x1, y1, c, 0, 0);
+    gfx_put(q, x2, y2, c, 0, 0);
 }
 
 void poly_fan(float cx, float cy, const float *pts, int n, u32 c)
 {
-    tiny3d_SetPolygon(TINY3D_TRIANGLE_FAN);
-    tiny3d_VertexPos(cx, cy, Z);
-    tiny3d_VertexColor(c);
-    for (int k = 0; k <= n; k++) {
-        tiny3d_VertexPos(pts[(k % n) * 2], pts[(k % n) * 2 + 1], Z);
-        tiny3d_VertexColor(c);
-    }
-    tiny3d_End();
+    gfx_vtx *q = shape(GFX_TRIANGLE_FAN, n + 2);
+    q = gfx_put(q, cx, cy, c, 0, 0);
+    for (int k = 0; k <= n; k++) q = gfx_put(q, pts[(k % n) * 2], pts[(k % n) * 2 + 1], c, 0, 0);
 }
 
 void card(float x, float y, float w, float h) { round_rect(x, y, w, h, 16, PANEL); }
@@ -468,28 +434,20 @@ void test_card(float x, float y, float w, float h, unsigned btn, const char *tit
 
 /* ---- a screen ------------------------------------------------------------- */
 
+/* No clear: the opaque background covers the whole output in every frame. */
 void begin_frame(void)
 {
-    tiny3d_Clear(0xff0a1222, TINY3D_CLEAR_ALL);
-    tiny3d_AlphaTest(1, 0x10, TINY3D_ALPHA_FUNC_GEQUAL);
-    tiny3d_BlendFunc(1, TINY3D_BLEND_FUNC_SRC_RGB_SRC_ALPHA | TINY3D_BLEND_FUNC_SRC_ALPHA_SRC_ALPHA,
-                     TINY3D_BLEND_FUNC_DST_RGB_ONE_MINUS_SRC_ALPHA | TINY3D_BLEND_FUNC_DST_ALPHA_ZERO,
-                     TINY3D_BLEND_RGB_FUNC_ADD | TINY3D_BLEND_ALPHA_FUNC_ADD);
+    gfx_begin();
     background();
 }
 
-/* tiny3d writes the vertices of every frame into one buffer, from offset 0,
- * and tiny3d_Flip does not wait for the RSX (tiny3d_WaitRSX is declared but
- * commented out in tiny3d.c). The next frame then overwrites vertices the RSX
- * is still drawing: when the picture changes, polygons of the old frame take
- * the new frame's data and flash across the screen. tiny3d_Flip flushes the
- * commands up to the flip, so GET reaches PUT when the RSX has drawn the
- * frame; the loop waits for that, 1 s at most. */
+/* Quit Game from the PS button menu reaches sys_callback here, in every frame,
+ * also while a job runs: the job ends before the app does. gfx_end shows the
+ * frame and returns when the RSX has drawn it. */
 void ui_flip(void)
 {
-    tiny3d_Flip();
-    gcmControlRegister *ctrl = gcmGetControlRegister();
-    for (int i = 0; ctrl && ctrl->get != ctrl->put && i < 5000; i++) sysUsleep(200);
+    sysUtilCheckCallback();
+    gfx_end();
 }
 
 #define TITLE_Y 24
@@ -576,12 +534,12 @@ void status_line(const char *msg, u32 color) { text_fit(MG, Y_STATUS, F_BODY, co
 
 static void viewport(int l, int t, int r, int b)
 {
-    float sx = Video_Resolution.width / 1920.0f, sy = Video_Resolution.height / 1080.0f;
+    float sx = gfx_w / 1920.0f, sy = gfx_h / 1080.0f;
     org_x = l;
     org_y = t;
     SW = r - l;
     SH = b - t;
-    tiny3d_UserViewport(1, l * sx, t * sy, sx, sy, sx, sy);
+    gfx_viewport(l * sx, t * sy, sx, sy);
 }
 
 void safe_apply(void) { viewport(safe_l, safe_t, safe_r, safe_b); }
@@ -630,17 +588,23 @@ void ui_init(void)
 {
     ioPadInit(7);
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0, sys_callback, NULL);
-    tiny3d_Init(1024 * 1024);
-    tiny3d_Project2D();
+    int step = gfx_init();
+    if (step) {                              /* no picture: the failed step goes to a file, for FTP */
+        char s[40];
+        sysLv2FsMkdir(APP_DIR, 0777);
+        fs_write_file(APP_DIR "/gfx_init.txt", s, snprintf(s, sizeof s, "gfx_init step %d\n", step), 0);
+        exit(0);
+    }
     /* 1:1 at 1080p: nearest sampling keeps every glyph pixel exact; any other
      * output scales the canvas, and linear sampling smooths it */
-    text_filter = Video_Resolution.width == 1920 && Video_Resolution.height == 1080 ? TEXTURE_NEAREST : TEXTURE_LINEAR;
+    text_linear = !(gfx_w == 1920 && gfx_h == 1080);
     if (fonts_init()) exit(0);
     safe_apply();
 }
 
 void ui_end(void)
 {
+    gfx_exit();                              /* the RSX idle, with nothing left in the ring */
     ioPadEnd();
     sysUtilUnregisterCallback(SYSUTIL_EVENT_SLOT0);
 }

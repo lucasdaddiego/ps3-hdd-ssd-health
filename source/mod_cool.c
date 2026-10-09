@@ -44,10 +44,11 @@ static void load_thread(void *arg)
 
 /* Fill-rate work before anything else is drawn: the opaque background,
  * again and again, so the picture does not change. (A layer under the alpha
- * test's 0x10 would be discarded and cost the RSX nothing.) */
+ * test's 0x10 would be discarded and cost the RSX nothing.) 160 layers, twice
+ * the 80 of 2.0.0: without a depth buffer each layer moves half the bytes. */
 static void rsx_load(void)
 {
-    for (int k = 0; k < 80; k++) background();
+    for (int k = 0; k < 160; k++) background();
 }
 
 static u32 temp_color(int t) { return t < 0 ? GREY : t < 72 ? GREEN : t < 80 ? YELLOW : RED; }

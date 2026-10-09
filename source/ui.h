@@ -1,8 +1,8 @@
 /* The frame every module draws in. The app draws in a 1920x1080 space, 1:1 at
  * 1080p output, into the part of the screen the TV shows (the canvas, SW x SH:
  * the visible area the Display module measures). Text comes from Inter bitmap
- * atlases at their native size (data/fonts.bin, art/make_font.py), one draw
- * call per string. Also here: a small drawing kit, the pad, two-press
+ * atlases at their native size (data/fonts.bin, art/make_font.py), one quad
+ * per glyph. Also here: a small drawing kit, the pad, two-press
  * gestures, a blocking call in a second thread with a counter on screen, and
  * the first-run prompt. */
 #ifndef UI_H
@@ -90,8 +90,8 @@ void round_rect(float x, float y, float w, float h, float r, u32 c);
 void round_frame(float x, float y, float w, float h, float r, float t, u32 c);
 void frame(float x, float y, float w, float h, float t, u32 c);
 void line(float x0, float y0, float x1, float y1, float w, u32 c);
-/* Many quads of one colour as one polygon: batch_begin, then batch_rect or
- * batch_line for each, then batch_end. */
+/* Many quads of one colour: batch_begin, then batch_rect or batch_line for
+ * each, then batch_end. */
 void batch_begin(u32 c);
 void batch_rect(float x, float y, float w, float h);
 void batch_line(float x0, float y0, float x1, float y1, float w);
