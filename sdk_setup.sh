@@ -6,6 +6,9 @@
 # app draws through, at the commit PS3GFX_REV pins, installed into the bundle's
 # portlibs/ppu: the only thing the app uses from there.
 # Needs: zsh, curl, git, make, shasum (macOS arm64/x86_64 or Linux x86_64).
+# PS3DEV_ARCHIVE=<folder>: an offline source instead of the internet, with
+# bundles/<the bundle file>, src/PSL1GHT.bundle and src/ps3gfx.bundle (git
+# bundles); the checksum and the two pins are checked the same way.
 #
 # Apps linked with the bundle's own runtime (PSL1GHT 2021+) die before main on
 # HFW 4.93 + PS3HEN 3.6.0: black screen, back to the XMB after ~10 s, even a
@@ -26,7 +29,8 @@ if [[ ! -x $PS3DEV/ppu/bin/ppu-gcc ]]; then
     *) print -u2 "no ps3dev nightly-2026-07-26 bundle for $(uname -s) $(uname -m)"; exit 1 ;;
   esac
   d=$(mktemp -d)
-  curl -fL --retry 3 -o $d/$bundle https://github.com/ps3dev/ps3dev/releases/download/nightly-2026-07-26/$bundle
+  if [[ -n $PS3DEV_ARCHIVE ]]; then cp $PS3DEV_ARCHIVE/bundles/$bundle $d/$bundle
+  else curl -fL --retry 3 -o $d/$bundle https://github.com/ps3dev/ps3dev/releases/download/nightly-2026-07-26/$bundle; fi
   [[ $(shasum -a 256 $d/$bundle | cut -d' ' -f1) == $sum ]] \
     || { print -u2 "bundle checksum mismatch for $bundle"; exit 1 }
   mkdir -p ${PS3DEV:h}
@@ -36,7 +40,8 @@ fi
 
 PSL1GHT_REV=6e565a70e927f55813babe86dc6f64149535f908   # 2020-11-25
 t=$(mktemp -d)
-git clone -q https://github.com/ps3dev/PSL1GHT $t/psl1ght
+from=https://github.com/ps3dev/PSL1GHT; [[ -n $PS3DEV_ARCHIVE ]] && from=$PS3DEV_ARCHIVE/src/PSL1GHT.bundle
+git clone -q $from $t/psl1ght
 git -C $t/psl1ght checkout -q $PSL1GHT_REV
 make -C $t/psl1ght/ppu --no-print-directory > $t/psl1ght.log 2>&1 || { tail -20 $t/psl1ght.log; exit 1 }
 make -C $t/psl1ght/ppu install --no-print-directory > /dev/null
@@ -51,7 +56,8 @@ print "$PS3DEV: runtime PSL1GHT 6e565a7 (2020)"
 # checks). This script is sourced in the console loop: no $0, return not exit.
 PS3GFX_REV=7afb1c6a65abeeb2804e7fb5d6d8d3f6a7c1e9db   # ps3gfx main, 2026-10-09; v0.1.0 after the console round
 src=$PS3DEV/src/ps3gfx; rm -rf $src
-git clone -q https://github.com/lucasdaddiego/ps3gfx $src && git -C $src checkout -q $PS3GFX_REV
+from=https://github.com/lucasdaddiego/ps3gfx; [[ -n $PS3DEV_ARCHIVE ]] && from=$PS3DEV_ARCHIVE/src/ps3gfx.bundle
+git clone -q $from $src && git -C $src checkout -q $PS3GFX_REV
 [[ $(git -C $src rev-parse HEAD) == $PS3GFX_REV ]] || { print -u2 "ps3gfx is not at $PS3GFX_REV"; return 1 }
 make --no-print-directory -C $src install > /dev/null
 print "$PS3DEV: ps3gfx ${PS3GFX_REV[1,7]} in portlibs/ppu"

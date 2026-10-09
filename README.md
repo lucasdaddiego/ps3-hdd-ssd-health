@@ -387,6 +387,10 @@ decoders), the vendor table, the compatibility text and the QR encoder.
 python3 art/make_art.py <Inter[opsz,wght].ttf>          # only to redraw ICON0/PIC1 and docs/icon.png
 ```
 
+With `PS3DEV_ARCHIVE=<folder>` the script reads everything from that folder
+instead of the internet (`bundles/<the bundle file>`, `src/PSL1GHT.bundle` and
+`src/ps3gfx.bundle` as git bundles) and checks the same checksum and pins: an
+offline build from a kept copy of the sources.
 `sdk_setup.sh` downloads the prebuilt ps3dev bundle `nightly-2026-07-26` for the
 host (`ps3dev-macos-ARM64`, `ps3dev-macos-X64` or `ps3dev-linux-X64`, SHA-256
 checked) with `curl` if `~/ps3dev` is missing. Then it builds PSL1GHT `6e565a7`
