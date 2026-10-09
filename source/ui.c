@@ -17,6 +17,7 @@
 #include "ui.h"
 #include "fonts_bin.h"
 #include "fs.h"
+#include "journal.h"
 
 #define PI_F 3.14159265f
 
@@ -589,6 +590,7 @@ void safe_set(int l, int t, int r, int b)
 void ui_init(const ui_app *a)
 {
     app = *a;
+    journal_init(app.dir);
     ioPadInit(7);
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0, sys_callback, NULL);
     int step = gfx_init();

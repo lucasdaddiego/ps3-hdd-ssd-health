@@ -1,5 +1,6 @@
-/* Access to the internal drive from a HEN app: LV2 storage syscalls, a journal
- * that remembers a call that froze the console, and the report file. */
+/* Access to the internal drive from a HEN app: LV2 storage syscalls, journaled
+ * (journal.h) so that a call that froze the console is never run again, and
+ * the report file. */
 #ifndef ATA_H
 #define ATA_H
 
@@ -8,10 +9,6 @@
 
 #define APP_DIR "/dev_hdd0/tmp/ps3_health"
 #define DEMO_DIR APP_DIR "/demo"
-
-/* Journal state of one named call. SKIPPED = declined at the first-run prompt,
- * kept until SQUARE twice clears the journal. */
-enum { J_NONE, J_PENDING, J_OK, J_BAD, J_FROZEN, J_SKIPPED };
 
 typedef struct {
     int info_rc, open_rc, identify_rc;
@@ -70,9 +67,6 @@ int drive_speed_test(drive_state *d);
 int drive_read_error_log(drive_state *d);
 int drive_read_gpl(drive_state *d);
 void drive_close(drive_state *d);
-int journal_clear(void);                                   /* 0, or the write rc */
-int journal_state(const char *name);
-void journal_skip(const char *name);
 void drive_report(drive_state *d, const char *when);       /* the drive section of the report + the .bin dumps */
 int compat_body(const drive_state *d, char *out, int n);
 int compat_title(const drive_state *d, char *out, int n);

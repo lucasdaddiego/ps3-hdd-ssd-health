@@ -19,6 +19,7 @@
 #include <sys/systime.h>
 #include "ata.h"
 #include "fs.h"
+#include "journal.h"
 #include "vendor.h"
 #include "version.h"
 #include "report.h"
@@ -28,7 +29,6 @@
 #define PROTO_NON_DATA 0
 #define PROTO_PIO_IN   1
 #define DIR_READ       1
-#define JOURNAL        APP_DIR "/journal.txt"
 
 /* Linux drivers/block/ps3disk.c struct lv1_ata_cmnd_block. Only the first 32
  * bytes go to LV2, the same cut as the BD drive's 56-byte ATAPI block: buffer
@@ -61,21 +61,6 @@ static s32 sm_get_fan_policy(u8 *st, u8 *mode, u8 *speed, u8 *unk)
     return_to_user_prog(s32);
 }
 
-/* ---- journal ------------------------------------------------------------ */
-
-static struct { char name[24]; int state; } jst[32];
-static int jcount, jloaded;
-
-static int *jstate(const char *name)
-{
-    for (int i = 0; i < jcount; i++)
-        if (!strcmp(jst[i].name, name)) return &jst[i].state;
-    if (jcount == 32) return &jst[31].state;
-    snprintf(jst[jcount].name, sizeof jst[jcount].name, "%s", name);
-    jst[jcount].state = J_NONE;
-    return &jst[jcount++].state;
-}
-
 /* The first USB stick, /dev_usb000 to 007: 0 with its path in dir, -1 when none. */
 int usb_find(char *dir, int n)
 {
@@ -86,104 +71,6 @@ int usb_find(char *dir, int n)
     }
     dir[0] = 0;
     return -1;
-}
-
-static void jappend(const char *fmt, const char *name, s32 rc, int ok)
-{
-    char line[96];
-    snprintf(line, sizeof line, fmt, name, (unsigned)rc, ok);
-    fs_write_file(JOURNAL, line, strlen(line), 1);
-}
-
-/* Reads the tail of the journal (the last 32 KB), so a long session cannot
- * push the newest "start"/"done" pair past the end of the buffer; the cut
- * line at the head of the tail is dropped. */
-static void journal_load(void)
-{
-    static char text[32768];
-    s32 fd;
-    u64 n = 0, size = 0, pos = 0;
-    char *first = text;
-    jcount = 0;
-    jloaded = 1;
-    if (sysLv2FsOpen(JOURNAL, SYS_O_RDONLY, &fd, 0, NULL, 0)) return;
-    if (sysLv2FsLSeek64(fd, 0, SEEK_END, &size) == 0 && size > sizeof text - 1) {
-        sysLv2FsLSeek64(fd, size - (sizeof text - 1), SEEK_SET, &pos);
-        first = NULL;                    /* the first line of the tail is cut */
-    } else {
-        sysLv2FsLSeek64(fd, 0, SEEK_SET, &pos);
-    }
-    sysLv2FsRead(fd, text, sizeof text - 1, &n);
-    sysLv2FsClose(fd);
-    text[n] = 0;
-    if (!first) {
-        first = strchr(text, '\n');
-        first = first ? first + 1 : text + n;
-    }
-    for (char *line = strtok(first, "\n"); line; line = strtok(NULL, "\n")) {
-        char verb[8], name[24];
-        int ok = 0;
-        if (sscanf(line, "%7s %23s", verb, name) != 2) continue;
-        char *okp = strstr(line, "ok=");
-        if (okp) ok = okp[3] == '1';
-        int *s = jstate(name);
-        if (!strcmp(verb, "start")) *s = J_PENDING;
-        else if (!strcmp(verb, "done") && *s != J_FROZEN) *s = ok ? J_OK : J_BAD;
-        else if (!strcmp(verb, "froze")) *s = J_FROZEN;
-        else if (!strcmp(verb, "skip")) *s = J_SKIPPED;
-    }
-    for (int i = 0; i < jcount; i++)
-        if (jst[i].state == J_PENDING) {
-            jst[i].state = J_FROZEN;
-            jappend("froze %s\n", jst[i].name, 0, 0);
-        }
-    if (size > sizeof text / 2) {    /* compact: one line per call, the frozen ones kept */
-        char line[64];
-        text[0] = 0;
-        for (int i = 0; i < jcount; i++) {
-            if (jst[i].state == J_FROZEN) snprintf(line, sizeof line, "froze %s\n", jst[i].name);
-            else if (jst[i].state == J_SKIPPED) snprintf(line, sizeof line, "skip %s\n", jst[i].name);
-            else snprintf(line, sizeof line, "done %s rc=0x00000000 ok=%d\n", jst[i].name, jst[i].state == J_OK);
-            strcat(text, line);
-        }
-        fs_write_file(JOURNAL, text, strlen(text), 0);
-    }
-}
-
-/* The clear gesture: an empty journal, so the next start runs every call again. */
-int journal_clear(void)
-{
-    int rc = fs_write_file(JOURNAL, "", 0, 0);
-    if (rc == 0) jcount = 0;             /* a failed write keeps the old entries, in the file and here */
-    return rc;
-}
-
-int journal_state(const char *name)
-{
-    if (!jloaded) journal_load();
-    return *jstate(name);
-}
-
-/* The first-run prompt was declined: remembered until the journal is cleared. */
-void journal_skip(const char *name)
-{
-    jappend("skip %s\n", name, 0, 0);
-    *jstate(name) = J_SKIPPED;
-}
-
-static int jstart(const char *name)
-{
-    int *s = jstate(name);
-    if (*s == J_FROZEN || *s == J_SKIPPED) return 0;
-    jappend("start %s\n", name, 0, 0);
-    *s = J_PENDING;
-    return 1;
-}
-
-static void jdone(const char *name, s32 rc, int ok)
-{
-    jappend("done %s rc=0x%08x ok=%d\n", name, rc, ok);
-    *jstate(name) = ok ? J_OK : J_BAD;
 }
 
 /* ---- drive calls ---------------------------------------------------------- */
@@ -270,19 +157,19 @@ void drive_probe(drive_state *d, void (*progress)(const char *msg))
     memcpy(d->prev_model, prev_model, sizeof prev_model);
     d->cpu_temp = d->rsx_temp = -1;
     journal_load();
-    d->identify_frozen = *jstate("identify") == J_FROZEN;
-    d->smart_frozen = *jstate("smart_data") == J_FROZEN;
-    d->selftest_frozen = *jstate("selftest_start") == J_FROZEN;
-    d->selftest_long_frozen = *jstate("selftest_long_start") == J_FROZEN;
-    d->speed_frozen = *jstate("speed_file") == J_FROZEN;
+    d->identify_frozen = journal_state("identify") == J_FROZEN;
+    d->smart_frozen = journal_state("smart_data") == J_FROZEN;
+    d->selftest_frozen = journal_state("selftest_start") == J_FROZEN;
+    d->selftest_long_frozen = journal_state("selftest_long_start") == J_FROZEN;
+    d->speed_frozen = journal_state("speed_file") == J_FROZEN;
 
     progress("Reading the drive size (syscall 609)");
-    if (jstart("devinfo")) { do_devinfo(d); jdone("devinfo", d->info_rc, d->info_rc == 0); }
+    if (journal_start("devinfo")) { do_devinfo(d); journal_done("devinfo", d->info_rc, d->info_rc == 0); }
     progress("Opening the drive (syscall 600)");
-    if (!jstart("open")) { d->open_rc = 0x7FFFFFFF; return; }
+    if (!journal_start("open")) { d->open_rc = 0x7FFFFFFF; return; }
     d->open_rc = storage_open(ATA_HDD, &d->handle);
     d->opened = d->open_rc == 0;
-    jdone("open", d->open_rc, d->opened);
+    journal_done("open", d->open_rc, d->opened);
     if (!d->opened) return;
 
     if (d->identify_frozen) {
@@ -290,11 +177,11 @@ void drive_probe(drive_state *d, void (*progress)(const char *msg))
         return;
     }
     progress("IDENTIFY DEVICE (syscall 616)");
-    jstart("identify");
+    journal_start("identify");
     d->identify_rc = ata_command(d, 0, 1, 0, 0xEC, PROTO_PIO_IN, 512);
     d->ata_ok = d->identify_rc == 0 && identify_ok(d);
     if (d->identify_rc) snprintf(d->identify_note, sizeof d->identify_note, "refused");
-    jdone("identify", d->identify_rc, d->ata_ok);
+    journal_done("identify", d->identify_rc, d->ata_ok);
     if (!d->ata_ok) return;
     memcpy(d->identify, buf, 512);
     d->have_identify = 1;
@@ -373,18 +260,8 @@ void console_firmware(void)
 /* The Cell and RSX temperatures for the drive pages (syscall 383, journaled like the drive commands). */
 void console_info(drive_state *d)
 {
-    if (!jloaded) journal_load();            /* demo mode comes here without drive_probe */
     d->cpu_temp = d->rsx_temp = -1;
     d->temps_rc = console_temps(&d->cpu_temp, &d->rsx_temp);
-}
-
-/* A polled call (the Cooling module reads every 2 s) is journaled when its
- * state is not yet known in this session: the first call, and the first call
- * after SQUARE twice cleared the journal. */
-static int jneeded(const char *name)
-{
-    int s = *jstate(name);
-    return s != J_OK && s != J_BAD;
 }
 
 int console_temps(int *cpu, int *rsx)
@@ -392,13 +269,12 @@ int console_temps(int *cpu, int *rsx)
     u32 t = 0;
     s32 rc;
     *cpu = *rsx = -1;
-    if (!jloaded) journal_load();
-    int journal = jneeded("temps");
-    if (journal && !jstart("temps")) return -1;
+    int journal = journal_needed("temps");
+    if (journal && !journal_start("temps")) return -1;
     rc = get_temperature(0, &t);
     if (rc == 0) *cpu = (int)(t >> 24);
     if (rc == 0 && get_temperature(1, &t) == 0) *rsx = (int)(t >> 24);
-    if (journal) jdone("temps", rc, rc == 0);
+    if (journal) journal_done("temps", rc, rc == 0);
     return rc;
 }
 
@@ -408,15 +284,14 @@ int fan_policy_read(int *percent, int *mode)
     s32 rc;
     *percent = -1;
     *mode = -1;
-    if (!jloaded) journal_load();
-    int journal = jneeded("fan_policy");
-    if (journal && !jstart("fan_policy")) return -1;   /* 0 for a frozen or skipped entry */
+    int journal = journal_needed("fan_policy");
+    if (journal && !journal_start("fan_policy")) return -1;   /* 0 for a frozen or skipped entry */
     rc = sm_get_fan_policy(&v[0], &v[1], &v[2], &v[3]);
     if (rc == 0) {
         *mode = v[1];
         *percent = v[2] * 100 / 255;
     }
-    if (journal) jdone("fan_policy", rc, rc == 0);
+    if (journal) journal_done("fan_policy", rc, rc == 0);
     return rc;
 }
 
@@ -430,8 +305,7 @@ int file_speed_test(const char *dir, const char *jname, double *mb, double *wsec
     const int pieces = 64;
     char p[128];
     snprintf(p, sizeof p, "%s/speed.tmp", dir);
-    if (!jloaded) journal_load();
-    if (!jstart(jname)) return -1;
+    if (!journal_start(jname)) return -1;
     for (unsigned i = 0; i < sizeof sbuf; i += 4) *(uint32_t *)(sbuf + i) = i * 2654435761u;
     s32 fd = -1, rc;
     u64 n = 0, t0 = 0, n0 = 0, t1 = 0, n1 = 0, t2 = 0, n2 = 0;
@@ -454,14 +328,14 @@ int file_speed_test(const char *dir, const char *jname, double *mb, double *wsec
     sysLv2FsUnlink(p);
     *wsec = (double)(t1 - t0) + (double)((s64)n1 - (s64)n0) / 1e9;
     *rsec = (double)(t2 - t1) + (double)((s64)n2 - (s64)n1) / 1e9;
-    jdone(jname, rc, rc == 0);
+    journal_done(jname, rc, rc == 0);
     return rc;
 }
 
 int drive_speed_test(drive_state *d)
 {
     if (d->demo) return -1;
-    d->speed_frozen = *jstate("speed_file") == J_FROZEN;
+    d->speed_frozen = journal_state("speed_file") == J_FROZEN;
     if (d->speed_frozen) return -1;
     d->speed_done = 0;
     d->speed_rc = file_speed_test(APP_DIR, "speed_file", &d->speed_mb, &d->speed_wsec, &d->speed_rsec);
@@ -471,9 +345,9 @@ int drive_speed_test(drive_state *d)
 
 static int smart_read(drive_state *d, const char *name, uint8_t features, uint16_t lba_low, uint8_t *dst, int *have)
 {
-    if (!jstart(name)) return 0x7FFFFFFF;
+    if (!journal_start(name)) return 0x7FFFFFFF;
     s32 rc = ata_command(d, features, 1, lba_low, 0xB0, PROTO_PIO_IN, 512);
-    jdone(name, rc, rc == 0);
+    journal_done(name, rc, rc == 0);
     if (rc == 0) {
         memcpy(dst, buf, 512);
         if (d->id.swapped) ata_unswap(dst, 512);
@@ -500,7 +374,7 @@ int drive_read_gpl(drive_state *d)
     d->dumps_dirty = 1;
     if (!d->ata_ok || d->demo || !d->id.gpl) return -1;
     memset(&d->ds, 0, sizeof d->ds);
-    if (jstart("gpl_devstat")) {
+    if (journal_start("gpl_devstat")) {
         uint8_t pages[32];
         int n = 0;
         d->gpl_rc = read_log_ext(d, 0x04, 0);
@@ -513,15 +387,15 @@ int drive_read_gpl(drive_state *d)
             else if (pages[i] == 5) devstat_temperature(buf, &d->ds);
             else devstat_ssd(buf, &d->ds);
         }
-        jdone("gpl_devstat", d->gpl_rc, d->gpl_rc == 0 && d->have_devstat);
+        journal_done("gpl_devstat", d->gpl_rc, d->gpl_rc == 0 && d->have_devstat);
     }
-    if (jstart("gpl_phy")) {
+    if (journal_start("gpl_phy")) {
         d->phy_rc = read_log_ext(d, 0x11, 0);
         if (d->phy_rc == 0) {
             memcpy(d->phylog, buf, 512);
             d->have_phy = phy_parse(buf, &d->phy) == 0;
         }
-        jdone("gpl_phy", d->phy_rc, d->have_phy);
+        journal_done("gpl_phy", d->phy_rc, d->have_phy);
     }
     return d->gpl_rc ? d->gpl_rc : d->phy_rc;
 }
@@ -531,7 +405,7 @@ int drive_read_smart(drive_state *d, int full)
 {
     d->dumps_dirty = 1;
     if (!d->ata_ok || d->demo) return -1;
-    d->smart_frozen = *jstate("smart_data") == J_FROZEN;
+    d->smart_frozen = journal_state("smart_data") == J_FROZEN;
     if (d->smart_frozen) return -1;
     if (d->have_smart) { d->last = d->s; d->have_last = 1; }
     d->smart_rc = smart_read(d, "smart_data", 0xD0, 0, d->smart, &d->have_smart);
@@ -562,9 +436,9 @@ int drive_start_selftest(drive_state *d, int type)
     const char *name = type == 2 ? "selftest_long_start" : "selftest_start";
     if (!drive_can_selftest(d)) return -1;
     if (type == 2 && d->selftest_long_frozen) return -1;
-    if (!jstart(name)) { if (type == 2) d->selftest_long_frozen = 1; else d->selftest_frozen = 1; return -1; }
+    if (!journal_start(name)) { if (type == 2) d->selftest_long_frozen = 1; else d->selftest_frozen = 1; return -1; }
     d->selftest_rc = ata_command(d, 0xD4, 0, type == 2 ? 0x02 : 0x01, 0xB0, PROTO_NON_DATA, 0);
-    jdone(name, d->selftest_rc, d->selftest_rc == 0);
+    journal_done(name, d->selftest_rc, d->selftest_rc == 0);
     return d->selftest_rc;
 }
 
