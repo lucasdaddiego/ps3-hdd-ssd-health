@@ -4,6 +4,7 @@
     python3 -I tools/syscalls.py build/ps3_health.elf          # check the ELF against tools/syscalls.allow
     python3 -I tools/syscalls.py build/ps3_health.elf --write  # rewrite the allowlist from this ELF
     python3 -I tools/syscalls.py --selftest                    # the scanner against an ELF built in memory
+    python3 -I tools/syscalls.py --allow <file> <elf> [--write]  # another app's allowlist instead of tools/syscalls.allow
 
 PSL1GHT makes a syscall as `li r11, N` followed by `sc` (ppu-lv2.h loads
 `register u64 scn asm("11")` with the number). The scan reads every executable
@@ -189,6 +190,13 @@ def main(argv):
         return
     write = '--write' in argv
     args = [a for a in argv if a != '--write']
+    allow = ALLOW
+    if '--allow' in args:
+        k = args.index('--allow')
+        if k + 1 >= len(args):
+            sys.exit(__doc__.strip())
+        allow = args[k + 1]
+        del args[k:k + 2]
     if len(args) != 1:
         sys.exit(__doc__.strip())
     path = args[0]
@@ -198,19 +206,19 @@ def main(argv):
         fail(str(err))
     found, unresolved = scan(elf)
     if write:
-        with open(ALLOW, 'w', encoding='utf-8') as f:
+        with open(allow, 'w', encoding='utf-8') as f:
             f.write('# LV2 syscalls the ELF makes (tools/syscalls.py --write); a number per line, # notes allowed.\n')
             for n in sorted(found):
                 f.write(f'{n}\n')
-        print(f'{ALLOW}: {len(found)} syscalls written from {path}')
-    errors, notes = check(found, unresolved, read_allow(ALLOW))
+        print(f'{allow}: {len(found)} syscalls written from {path}')
+    errors, notes = check(found, unresolved, read_allow(allow))
     for line in notes:
         print(f'syscalls.py: note: {line}')
     if errors:
         for line in errors:
             print(f'syscalls.py: {line}', file=sys.stderr)
         sys.exit(1)
-    print(f'{path}: {len(found)} syscalls ({sum(found.values())} call sites), all in {os.path.basename(ALLOW)}, none forbidden')
+    print(f'{path}: {len(found)} syscalls ({sum(found.values())} call sites), all in {os.path.basename(allow)}, none forbidden')
 
 
 if __name__ == '__main__':

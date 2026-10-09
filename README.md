@@ -411,7 +411,8 @@ Then `build.sh`:
    when one is not in `tools/syscalls.allow`, or when 602, 604 or 870 appears
    (see Safety). A number that reaches r11 another way escapes the scan, so
    this is a guard against a mistake, not a proof. `--write` rewrites the
-   allowlist from a known-good ELF;
+   allowlist from a known-good ELF, and `--allow <file>` takes another
+   allowlist (another app that runs these checks);
 4. runs `python3 -I verify_self.py`, which decrypts the signed EBOOT, compares
    every segment with the ELF and recomputes each segment's HMAC-SHA1 and the
    ECDSA signature. The Sony key material it needs is not in this repository:
