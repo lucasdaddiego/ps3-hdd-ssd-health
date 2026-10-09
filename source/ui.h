@@ -70,7 +70,13 @@ extern unsigned armed;               /* the first press of a two-press gesture *
 extern const char *ui_module;        /* the module name in the title bar, NULL on the home screen */
 extern int ui_demo;                  /* DEMO in the title bar */
 
-void ui_init(void);
+/* The app as the frame needs it; ui_init keeps the three pointers. */
+typedef struct {
+    const char *name;        /* the title bar */
+    const char *version;     /* drawn as v<version> */
+    const char *dir;         /* the app folder: safe_area.txt, gfx_init.txt */
+} ui_app;
+void ui_init(const ui_app *a);
 void ui_end(void);
 
 /* text: y is the top of the line box; each call returns the x after the text */
@@ -139,8 +145,9 @@ void run_job_cancelable(const char *msg, void (*fn)(void));
 /* Returns 1 to run, 0 to skip, -1 on exit. */
 int first_run_prompt(const char *title_s, const char *l1, const char *l2, const char *l3);
 
-/* The visible area in 1920x1080 units, kept in APP_DIR/safe_area.txt. The
- * canvas is drawn 1:1 inside it. 93 % of the screen until it is measured. */
+/* The visible area in 1920x1080 units, kept in safe_area.txt in the app
+ * folder (ui_app.dir). The canvas is drawn 1:1 inside it. 93 % of the screen
+ * until it is measured. */
 extern int safe_l, safe_t, safe_r, safe_b;
 #define SAFE_DEF_L 67                 /* the default: 93 % of the screen */
 #define SAFE_DEF_T 38

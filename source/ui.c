@@ -16,9 +16,7 @@
 #include "gfx.h"
 #include "ui.h"
 #include "fonts_bin.h"
-#include "ata.h"
 #include "fs.h"
-#include "version.h"
 
 #define PI_F 3.14159265f
 
@@ -31,6 +29,7 @@ int ui_demo;
 int safe_l = SAFE_DEF_L, safe_t = SAFE_DEF_T, safe_r = SAFE_DEF_R, safe_b = SAFE_DEF_B;
 int SW = SAFE_DEF_R - SAFE_DEF_L, SH = SAFE_DEF_B - SAFE_DEF_T;
 static int org_x = SAFE_DEF_L, org_y = SAFE_DEF_T;   /* the canvas origin on the screen */
+static ui_app app;                           /* the name, the version and the folder, from ui_init */
 
 static void sys_callback(u64 status, u64 param, void *usrdata)
 {
@@ -455,8 +454,8 @@ void ui_flip(void)
 
 void title(void)
 {
-    float x = text(MG, TITLE_Y, F_TITLE, WHITE, "PS3 Health");
-    x = text(x + 14, TITLE_Y + base_dy(F_TITLE, F_SMALL), F_SMALL, DIM, "v" APP_VERSION);
+    float x = text(MG, TITLE_Y, F_TITLE, WHITE, "%s", app.name);
+    x = text(x + 14, TITLE_Y + base_dy(F_TITLE, F_SMALL), F_SMALL, DIM, "v%s", app.version);
     if (ui_module) {
         disc(x + 22, TITLE_Y + fonts[F_TITLE].asc - 10, 4, DIM);
         x = text(x + 40, TITLE_Y + base_dy(F_TITLE, F_MED), F_MED, BLUE, "%s", ui_module);
@@ -558,9 +557,10 @@ int safe_valid(int l, int t, int r, int b)
 
 int safe_load(void)
 {
-    char t[64];
+    char p[128], t[64];
     int l, tp, r, b;
-    int n = fs_read_file(APP_DIR "/safe_area.txt", t, sizeof t - 1);
+    snprintf(p, sizeof p, "%s/safe_area.txt", app.dir);
+    int n = fs_read_file(p, t, sizeof t - 1);
     if (n <= 0) return 0;
     t[n] = 0;
     if (sscanf(t, "%d %d %d %d", &l, &tp, &r, &b) != 4 || !safe_valid(l, tp, r, b))
@@ -575,25 +575,28 @@ int safe_load(void)
 
 void safe_set(int l, int t, int r, int b)
 {
-    char s[64];
+    char p[128], s[64];
     safe_l = l;
     safe_t = t;
     safe_r = r;
     safe_b = b;
+    snprintf(p, sizeof p, "%s/safe_area.txt", app.dir);
     snprintf(s, sizeof s, "%d %d %d %d\n", l, t, r, b);
-    fs_write_file(APP_DIR "/safe_area.txt", s, strlen(s), 0);
+    fs_write_file(p, s, strlen(s), 0);
     safe_apply();
 }
 
-void ui_init(void)
+void ui_init(const ui_app *a)
 {
+    app = *a;
     ioPadInit(7);
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0, sys_callback, NULL);
     int step = gfx_init();
     if (step) {                              /* no picture: the failed step goes to a file, for FTP */
-        char s[40];
-        sysLv2FsMkdir(APP_DIR, 0777);
-        fs_write_file(APP_DIR "/gfx_init.txt", s, snprintf(s, sizeof s, "gfx_init step %d\n", step), 0);
+        char p[128], s[40];
+        sysLv2FsMkdir(app.dir, 0777);
+        snprintf(p, sizeof p, "%s/gfx_init.txt", app.dir);
+        fs_write_file(p, s, snprintf(s, sizeof s, "gfx_init step %d\n", step), 0);
         exit(0);
     }
     /* 1:1 at 1080p: nearest sampling keeps every glyph pixel exact; any other

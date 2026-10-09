@@ -1,9 +1,8 @@
 /* Whole files through the sysLv2Fs* syscalls: the sysFs* calls are stubs for
  * the cellFs module, which an app must load first. */
-#include <stddef.h>
+#include <stdio.h>
 #include <sys/file.h>
 #include "fs.h"
-#include "ata.h"                             /* APP_DIR, until fs_selftest takes the folder */
 
 int fs_write_file(const char *path, const void *data, u64 len, int append)
 {
@@ -30,13 +29,15 @@ int fs_read_file(const char *path, void *data, int n)
 
 /* File self-test before anything reaches the drive: the journal is the only
  * record of a freeze, so drive_probe must not run when writes fail. */
-int fs_selftest(int *mkdir_rc, int *open_rc, int *write_rc)
+int fs_selftest(const char *dir, int *mkdir_rc, int *open_rc, int *write_rc)
 {
+    char p[128];
     s32 fd;
     u64 w = 0;
-    *mkdir_rc = sysLv2FsMkdir(APP_DIR, 0777);
+    *mkdir_rc = sysLv2FsMkdir(dir, 0777);
     *write_rc = -1;
-    *open_rc = sysLv2FsOpen(APP_DIR "/starts.txt", SYS_O_WRONLY | SYS_O_CREAT | SYS_O_APPEND, &fd, 0666, NULL, 0);
+    snprintf(p, sizeof p, "%s/starts.txt", dir);
+    *open_rc = sysLv2FsOpen(p, SYS_O_WRONLY | SYS_O_CREAT | SYS_O_APPEND, &fd, 0666, NULL, 0);
     if (*open_rc) return -1;
     *write_rc = sysLv2FsWrite(fd, "start\n", 6, &w);
     sysLv2FsFsync(fd);

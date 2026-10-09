@@ -6,6 +6,7 @@
 #include "app.h"
 #include "ui.h"
 #include "report.h"
+#include "version.h"
 
 int fs_ok, fs_mk, fs_op, fs_wr;
 
@@ -18,8 +19,8 @@ static void leave(void)
 
 int main(void)
 {
-    ui_init();
-    fs_ok = fs_selftest(&fs_mk, &fs_op, &fs_wr) == 0;
+    ui_init(&(const ui_app){"PS3 Health", APP_VERSION, APP_DIR});
+    fs_ok = fs_selftest(APP_DIR, &fs_mk, &fs_op, &fs_wr) == 0;
     D.cpu_temp = D.rsx_temp = -1;
     if (!safe_load() && fs_ok) mod_display_calibrate(1);   /* the first start: the visible area of this TV */
     state_load();
