@@ -43,7 +43,6 @@ int mod_drive_open(void);
 void mod_drive_report(void);
 int mod_drive_probed(void);        /* 1 when the drive (or the demo data) was read in this session */
 int mod_display_open(void);
-void mod_display_calibrate(int first);   /* the visible-area screen; first: at the first start */
 void mod_display_report(void);
 int mod_pad_open(void);
 void mod_pad_report(void);

@@ -587,6 +587,95 @@ void safe_set(int l, int t, int r, int b)
     safe_apply();
 }
 
+/* An arrow whose tip touches the edge, pointing at it. */
+static void arrow(float tx, float ty, float dx, float dy, u32 c)
+{
+    float bx = tx - dx * 46, by = ty - dy * 46, px = -dy * 26, py = dx * 26;
+    tri(tx, ty, bx + px, by + py, bx - px, by - py, c);
+    line(bx, by, bx - dx * 40, by - dy * 40, 10, c);
+}
+
+/* The edges on the full screen. D-pad moves both sides together; SQUARE
+ * switches to one edge at a time (L1/R1 choose it). CROSS saves, TRIANGLE
+ * takes the whole screen. CIRCLE leaves; at the first start it keeps the
+ * default and saves it, so the screen does not come back. */
+void safe_calibrate(int first)
+{
+    int e[4] = {safe_l, safe_t, safe_r, safe_b};
+    int single = 0, sel = 0;
+    s64 since = 0, last = 0;
+    static const char *const names[4] = {"left", "top", "right", "bottom"};
+    safe_override(1);
+    while (!quit) {
+        read_pad();
+        if (pressed & BTN_CIRCLE) {
+            if (first) safe_set(safe_l, safe_t, safe_r, safe_b);
+            break;
+        }
+        if (pressed & BTN_CROSS) {
+            safe_set(e[0], e[1], e[2], e[3]);
+            break;
+        }
+        if (pressed & BTN_TRIANGLE) { e[0] = 0; e[1] = 0; e[2] = 1920; e[3] = 1080; }
+        if (pressed & BTN_SQUARE) single = !single;
+        if (single && (pressed & BTN_R1)) sel = (sel + 1) % 4;
+        if (single && (pressed & BTN_L1)) sel = (sel + 3) % 4;
+        unsigned dir = held & (BTN_LEFT | BTN_RIGHT | BTN_UP | BTN_DOWN);
+        s64 now = sysGetSystemTime();
+        int step = 0;
+        if (pressed & dir) { step = 1; since = last = now; }
+        else if (dir && now - since > 350000 && now - last > 30000) { step = 1; last = now; }
+        if (step) {
+            int n[4] = {e[0], e[1], e[2], e[3]};
+            if (!single) {
+                int h = (dir & BTN_RIGHT) ? 2 : (dir & BTN_LEFT) ? -2 : 0, v = (dir & BTN_UP) ? 2 : (dir & BTN_DOWN) ? -2 : 0;
+                n[0] -= h; n[2] += h; n[1] -= v; n[3] += v;
+                if (n[0] < 0) n[0] = 0;              /* one side at the screen edge: the other still moves */
+                if (n[2] > 1920) n[2] = 1920;
+                if (n[1] < 0) n[1] = 0;
+                if (n[3] > 1080) n[3] = 1080;
+            } else if (sel == 0 || sel == 2) n[sel] += (dir & BTN_RIGHT) ? 2 : (dir & BTN_LEFT) ? -2 : 0;
+            else n[sel] += (dir & BTN_DOWN) ? 2 : (dir & BTN_UP) ? -2 : 0;
+            if (safe_valid(n[0], n[1], n[2], n[3])) memcpy(e, n, sizeof e);   /* the same check as the next start */
+        }
+
+        begin_frame();
+        u32 cut = 0x3c1018ff;
+        rect(0, 0, 1920, e[1], cut);
+        rect(0, e[3], 1920, 1080 - e[3], cut);
+        rect(0, e[1], e[0], e[3] - e[1], cut);
+        rect(e[2], e[1], 1920 - e[2], e[3] - e[1], cut);
+        for (int k = 0; k < 4; k++) {
+            u32 c = single && k == sel ? YELLOW : single ? 0x4fd98280 : GREEN;
+            if (k == 0) rect(e[0], e[1], 4, e[3] - e[1], c);
+            if (k == 1) rect(e[0], e[1], e[2] - e[0], 4, c);
+            if (k == 2) rect(e[2] - 4, e[1], 4, e[3] - e[1], c);
+            if (k == 3) rect(e[0], e[3] - 4, e[2] - e[0], 4, c);
+        }
+        float cx = (e[0] + e[2]) / 2.0f, cy = (e[1] + e[3]) / 2.0f;
+        arrow(e[0], cy, -1, 0, single && sel == 0 ? YELLOW : GREEN);
+        arrow(cx, e[1], 0, -1, single && sel == 1 ? YELLOW : GREEN);
+        arrow(e[2], cy, 1, 0, single && sel == 2 ? YELLOW : GREEN);
+        arrow(cx, e[3], 0, 1, single && sel == 3 ? YELLOW : GREEN);
+
+        float w = 1180, h = 420, x = cx - w / 2, y = cy - h / 2;
+        card(x, y, w, h);
+        text(x + 40, y + 32, F_MED, WHITE, first ? "Your TV: the visible area" : "Visible area");
+        text_wrap(x + 40, y + 96, F_BODY, GREY, w - 80, 2,
+                  "Move the edges until the four arrow tips touch the edges of your TV picture. The app then draws "
+                  "every screen inside them, pixel for pixel.");
+        if (single) text(x + 40, y + 190, F_BODY, YELLOW, "One edge at a time: the %s edge. L1/R1 choose the edge, the D-pad moves it.", names[sel]);
+        else text(x + 40, y + 190, F_BODY, WHITE, "D-pad: LEFT/RIGHT narrower or wider, UP/DOWN shorter or taller.");
+        text(x + 40, y + 236, F_SMALL | TNUM, GREY, "left %d   top %d   right %d   bottom %d   =   %d x %d of 1920 x 1080", e[0], e[1], e[2],
+             e[3], e[2] - e[0], e[3] - e[1]);
+        footer_at(x + 40, y + 300, single ? "CROSS save  SQUARE both sides  TRIANGLE whole screen" : "CROSS save  SQUARE one edge  TRIANGLE whole screen");
+        footer_at(x + 40, y + 350, first ? "CIRCLE keep the default" : "CIRCLE cancel");
+        ui_flip();
+    }
+    safe_override(0);
+    pressed = 0;                             /* a button still down is not a new press */
+}
+
 void ui_init(const ui_app *a)
 {
     app = *a;

@@ -160,5 +160,6 @@ int safe_load(void);                 /* 1 when a measured area was read */
 void safe_set(int l, int t, int r, int b);   /* writes the file and applies it */
 void safe_apply(void);
 void safe_override(int full);        /* 1: the canvas is the whole screen (the measure and the patterns) */
+void safe_calibrate(int first);      /* the first-start screen that measures the TV (first = 1), and the Display module's CROSS */
 
 #endif
