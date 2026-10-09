@@ -20,7 +20,7 @@ body:
     id: firmware
     attributes:
       label: Firmware and app version
-      placeholder: "4.93 (Europe), app 2.0.1"
+      placeholder: "4.93 (Europe), app 2.0.2"
     validations:
       required: true
   - type: input

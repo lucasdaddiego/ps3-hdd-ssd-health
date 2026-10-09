@@ -98,7 +98,7 @@ ends with the same text.
 
 ## Install
 
-1. Download `PS3-Health-v2.0.1.pkg` from [Releases](../../releases).
+1. Download `PS3-Health-v2.0.2.pkg` from [Releases](../../releases).
 2. Copy it to `/dev_hdd0/packages/` (FTP), or to the root of a FAT32 USB stick.
 3. With HEN on, install it: Game → Package Manager → Install Package Files (Standard
    or USB).
