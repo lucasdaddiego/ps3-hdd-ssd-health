@@ -263,13 +263,13 @@ static void net_tile(void)
     if (usb.done && usb.rc == 0) snprintf(l1, sizeof l1, "USB %.0f/%.0f MB/s", mbs(usb.mb, usb.wsec), mbs(usb.mb, usb.rsec));
     else if (usb.done) snprintf(l1, sizeof l1, "USB test: %s", usb_why());
     else snprintf(l1, sizeof l1, "USB not tested");
-    int j = 0;
+    /* The unit follows the last speed: "net 34, LAN 941 Mbit/s", "net 34 Mbit/s, LAN failed". */
+    int j = 0, lan_ok = lan.done && lan.rc == 0;
     l2[0] = 0;
-    if (dl.done && dl.rc == 0) j += snprintf(l2 + j, sizeof l2 - j, "net %.0f", mbit(dl.bytes, dl.sec));
+    if (dl.done && dl.rc == 0) j += snprintf(l2 + j, sizeof l2 - j, "net %.0f%s", mbit(dl.bytes, dl.sec), lan_ok ? "" : " Mbit/s");
     else if (dl.done) j += snprintf(l2 + j, sizeof l2 - j, "net failed");
-    if (lan.done && lan.rc == 0) j += snprintf(l2 + j, sizeof l2 - j, "%sLAN %.0f", j ? ", " : "", mbit(lan.bytes, lan.sec));
+    if (lan_ok) j += snprintf(l2 + j, sizeof l2 - j, "%sLAN %.0f Mbit/s", j ? ", " : "", mbit(lan.bytes, lan.sec));
     else if (lan.done) j += snprintf(l2 + j, sizeof l2 - j, "%sLAN failed", j ? ", " : "");
-    if ((dl.done && dl.rc == 0) || (lan.done && lan.rc == 0)) snprintf(l2 + j, sizeof l2 - j, " Mbit/s");
     if (!l2[0]) snprintf(l2, sizeof l2, "network not tested");
     state_set("transfer", failed ? DOT_WARN : DOT_OK, l1, l2);
 }
