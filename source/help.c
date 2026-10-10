@@ -30,11 +30,16 @@ static struct { uint8_t r, c, len; } qr_run[QR_SIDE * (QR_SIDE + 1) / 2];   /* t
  * when it goes back home. */
 void help_keep(void)
 {
-    static char title_s[96], body[sizeof qr_body], t[sizeof title_s + sizeof body];
+    static char title_s[96], body[sizeof qr_body], t[sizeof title_s + sizeof body], last[sizeof t];
+    static int last_len = -1, last_rc;
     compat_title(&D, title_s, sizeof title_s);
     compat_body(&D, body, sizeof body);
     int n = snprintf(t, sizeof t, "%s\n%s", title_s, body);
-    fs_write_file(KEPT_FILE, t, n < (int)sizeof t ? n : (int)sizeof t - 1, 0);
+    if (n > (int)sizeof t - 1) n = (int)sizeof t - 1;
+    if (n == last_len && !last_rc && !memcmp(t, last, (size_t)n)) return;   /* unchanged: no fsync on the UI thread */
+    last_rc = fs_write_file(KEPT_FILE, t, n, 0);
+    memcpy(last, t, (size_t)n);
+    last_len = n;
 }
 
 /* The kept text into title_s and qr_body: 0, or -1 when there is none. */
