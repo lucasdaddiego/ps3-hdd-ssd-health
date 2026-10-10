@@ -14,7 +14,7 @@ concurrency:
 jobs:
   pkg:
     name: Build the pkg and attach it to a draft release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to 26.04 from 2026-10-19; the bundle and libelf1t64 are checked on 24.04
     permissions:
       contents: write
     env:

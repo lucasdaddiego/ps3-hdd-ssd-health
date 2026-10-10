@@ -15,7 +15,7 @@ concurrency:
 jobs:
   host:
     name: Host test and script smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to 26.04 from 2026-10-19; the bundle and libelf1t64 are checked on 24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -53,7 +53,7 @@ jobs:
 
   pkg:
     name: PS3 pkg (Linux ps3dev bundle)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to 26.04 from 2026-10-19; the bundle and libelf1t64 are checked on 24.04
     env:
       # Optional: the key file for verify_self.py (see NOTICE item 6). Without
       # it the pkg is built and uploaded, and only the signature check is skipped.
